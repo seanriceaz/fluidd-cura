@@ -73,7 +73,7 @@ class CuraSlicer:
         )
         self.server.register_endpoint(
             "/server/cura_slicer/profiles/{profile_name}",
-            ["GET", "PUT", "DELETE"],
+            ["GET", "POST", "DELETE"],
             self._handle_profile,
         )
         self.server.register_endpoint(
@@ -158,7 +158,7 @@ class CuraSlicer:
             return json.load(f)
 
     async def _handle_profiles(self, web_request: WebRequest) -> Any:
-        method = web_request.get_method()
+        method = web_request.get_action().name
 
         if method == "GET":
             profiles = []
@@ -179,7 +179,7 @@ class CuraSlicer:
 
     async def _handle_profile(self, web_request: WebRequest) -> Any:
         profile_name = web_request.get_str("profile_name")
-        method = web_request.get_method()
+        method = web_request.get_action().name
 
         if method == "GET":
             data = self._load_profile(profile_name)
@@ -195,7 +195,7 @@ class CuraSlicer:
             logger.info(f"Deleted profile: {profile_name}")
             return {"deleted": profile_name}
 
-        # PUT – update
+        # POST – update
         body = web_request.get_json_body()
         body["name"] = profile_name
         return await self._save_profile(body)
@@ -298,7 +298,7 @@ class CuraSlicer:
         return None
 
     async def _handle_definitions(self, web_request: WebRequest) -> Any:
-        method = web_request.get_method()
+        method = web_request.get_action().name
 
         if method == "GET":
             return {"definitions": self._list_definitions()}
@@ -326,7 +326,7 @@ class CuraSlicer:
 
     async def _handle_definition(self, web_request: WebRequest) -> Any:
         def_name = web_request.get_str("def_name")
-        method = web_request.get_method()
+        method = web_request.get_action().name
 
         if method == "GET":
             path = self._resolve_definition_path(def_name)
@@ -510,7 +510,7 @@ class CuraSlicer:
 
     async def _handle_job(self, web_request: WebRequest) -> Any:
         job_id = web_request.get_str("job_id")
-        method = web_request.get_method()
+        method = web_request.get_action().name
 
         if job_id not in self._jobs:
             raise self.server.error(f"Job '{job_id}' not found", 404)
