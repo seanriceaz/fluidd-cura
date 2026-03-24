@@ -19,18 +19,32 @@ INSTALL_HOME="$(eval echo ~"$INSTALL_USER")"
 
 echo -e "${BOLD}${RED}Fluidd-Cura Slicer — Uninstaller${RESET}"
 echo ""
-warn "This will remove the Moonraker plugin, nginx config, and web UI."
-warn "Your sliced gcode files and cura profiles/definitions will NOT be deleted."
+warn "This will remove:"
+warn "  • Moonraker plugin (cura_slicer.py)"
+warn "  • [cura_slicer] section from moonraker.conf"
+warn "  • Cura Slicer panel from Fluidd's dashboard"
+warn "  • nginx /cura-slicer/ location config"
+warn "  • Web UI files (/var/www/cura-slicer/)"
+echo ""
+warn "The following will NOT be deleted (your data):"
+warn "  • Sliced gcode files  (printer_data/gcodes/sliced/)"
+warn "  • Cura profiles       (printer_data/cura_profiles/)"
+warn "  • Printer definitions (printer_data/cura_definitions/)"
 echo ""
 read -rp "Continue? (y/N) " CONFIRM
 [[ "$CONFIRM" =~ ^[Yy]$ ]] || die "Aborted."
 
-# ── Remove Moonraker plugin ───────────────────────────────────────────────────
+# =============================================================================
+# 1. Remove Moonraker plugin
+# =============================================================================
 heading "Removing Moonraker plugin"
 
 MOONRAKER_DIR=""
-for d in "$INSTALL_HOME/moonraker" "/home/pi/moonraker" "/opt/moonraker"; do
-  [ -f "$d/moonraker/server.py" ] && MOONRAKER_DIR="$d" && break
+for d in "$INSTALL_HOME/moonraker" "/home/pi/moonraker" "/home/klipper/moonraker" "/opt/moonraker"; do
+  if [ -f "$d/moonraker/server.py" ]; then
+    MOONRAKER_DIR="$d"
+    break
+  fi
 done
 
 if [ -n "$MOONRAKER_DIR" ]; then
@@ -39,71 +53,169 @@ if [ -n "$MOONRAKER_DIR" ]; then
     sudo rm "$PLUGIN"
     ok "Removed $PLUGIN"
   else
-    info "Plugin not found – skipping."
+    info "Plugin not found at $PLUGIN – skipping."
   fi
 else
   warn "Moonraker directory not found – skipping plugin removal."
+  warn "Delete moonraker/moonraker/components/cura_slicer.py manually if needed."
 fi
 
-# ── Remove moonraker.conf section ────────────────────────────────────────────
+# =============================================================================
+# 2. Clean moonraker.conf
+# =============================================================================
 heading "Cleaning moonraker.conf"
 
 MOONRAKER_DATA=""
-for d in "$INSTALL_HOME/printer_data" "/home/pi/printer_data"; do
-  [ -d "$d" ] && MOONRAKER_DATA="$d" && break
+for d in "$INSTALL_HOME/printer_data" "/home/pi/printer_data" "/home/klipper/printer_data"; do
+  if [ -d "$d" ]; then
+    MOONRAKER_DATA="$d"
+    break
+  fi
 done
 
-MOONRAKER_CONF="${MOONRAKER_DATA}/config/moonraker.conf"
-if [ -f "$MOONRAKER_CONF" ]; then
-  # Remove the [cura_slicer] block (section + all its lines until the next section)
-  sudo python3 - "$MOONRAKER_CONF" <<'PYEOF'
+if [ -z "$MOONRAKER_DATA" ]; then
+  warn "Could not find printer_data directory – skipping moonraker.conf cleanup."
+else
+  MOONRAKER_CONF="$MOONRAKER_DATA/config/moonraker.conf"
+  if [ -f "$MOONRAKER_CONF" ]; then
+    python3 - "$MOONRAKER_CONF" <<'PYEOF'
 import sys, re
 path = sys.argv[1]
 with open(path) as f:
     content = f.read()
-# Remove the cura_slicer section and trailing comment block added by installer
+# Remove the installer comment block + [cura_slicer] section
 cleaned = re.sub(
-    r'\n# ── Cura Slicer.*?\[cura_slicer\][^\[]*',
+    r'\n# ── Cura Slicer \(added by fluidd-cura.*?\[cura_slicer\][^\[]*',
     '',
     content,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
-# Also remove a plain [cura_slicer] section if the comment wasn't there
+# Also remove a bare [cura_slicer] section if the comment wasn't there
 cleaned = re.sub(
     r'\n\[cura_slicer\][^\[]*',
     '',
     cleaned,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
-with open(path, 'w') as f:
-    f.write(cleaned)
-print(f"Cleaned: {path}")
+if cleaned != content:
+    with open(path, 'w') as f:
+        f.write(cleaned)
+    print(f"Cleaned: {path}")
+else:
+    print(f"No [cura_slicer] section found in {path} – skipping.")
 PYEOF
-  ok "moonraker.conf cleaned."
-else
-  warn "moonraker.conf not found – skipping."
+    ok "moonraker.conf processed."
+  else
+    warn "moonraker.conf not found at $MOONRAKER_CONF – skipping."
+  fi
 fi
 
-# ── Remove nginx snippet ──────────────────────────────────────────────────────
+# =============================================================================
+# 3. Remove Cura Slicer panel from Fluidd's dashboard
+#
+# Fluidd stores its camera/panel list in Moonraker's database
+# (namespace=fluidd, key=cameras).  We remove our entry from that list.
+# Moonraker must still be running at this point (we restart it later).
+# =============================================================================
+heading "Removing Cura Slicer panel from Fluidd"
+
+python3 <<'PYEOF'
+import json, sys
+try:
+    import urllib.request as req
+    import urllib.error  as uerr
+except ImportError:
+    print("WARN: Python urllib not available – skipping Fluidd panel removal")
+    sys.exit(0)
+
+MOONRAKER = "http://localhost:7125"
+
+# ── Read existing cameras ────────────────────────────────────────────────────
+try:
+    resp = req.urlopen(
+        f"{MOONRAKER}/server/database/item?namespace=fluidd&key=cameras",
+        timeout=5,
+    )
+    result = json.loads(resp.read()).get("result", {})
+    cameras = result.get("value", [])
+    if not isinstance(cameras, list):
+        cameras = []
+except uerr.HTTPError as exc:
+    if exc.code == 404:
+        print("No Fluidd camera entries found in Moonraker DB – skipping.")
+        sys.exit(0)
+    print(f"WARN: Moonraker DB read failed ({exc}) – skipping Fluidd panel removal.")
+    sys.exit(0)
+except Exception as exc:
+    print(f"WARN: Could not reach Moonraker ({exc}) – skipping Fluidd panel removal.")
+    sys.exit(0)
+
+# ── Filter out the Cura Slicer entry ────────────────────────────────────────
+original_len = len(cameras)
+cameras = [
+    c for c in cameras
+    if not (
+        "cura-slicer" in c.get("url", "").lower()
+        or c.get("name", "").lower() == "cura slicer"
+    )
+]
+removed = original_len - len(cameras)
+
+if removed == 0:
+    print("Cura Slicer not found in Fluidd cameras – skipping.")
+    sys.exit(0)
+
+# ── Write back ───────────────────────────────────────────────────────────────
+body = json.dumps({
+    "namespace": "fluidd",
+    "key":       "cameras",
+    "value":     cameras,
+}).encode()
+post = req.Request(
+    f"{MOONRAKER}/server/database/item",
+    data=body,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+try:
+    req.urlopen(post, timeout=5)
+    print(f"OK: Removed {removed} Cura Slicer entr{'y' if removed == 1 else 'ies'} from Fluidd dashboard.")
+except Exception as exc:
+    print(f"WARN: Could not write to Moonraker DB ({exc}).")
+    print("      Remove the 'Cura Slicer' camera manually in Fluidd → Settings → Cameras.")
+PYEOF
+
+# =============================================================================
+# 4. Remove nginx config
+# =============================================================================
 heading "Removing nginx config"
 
 NGINX_SNIPPET="/etc/nginx/snippets/cura-slicer.conf"
 if [ -f "$NGINX_SNIPPET" ]; then
   sudo rm "$NGINX_SNIPPET"
   ok "Removed $NGINX_SNIPPET"
+else
+  info "nginx snippet not found – skipping."
 fi
 
-# Remove include from site config
+NGINX_RELOADED=false
 for site in /etc/nginx/sites-enabled/fluidd /etc/nginx/sites-enabled/mainsail \
             /etc/nginx/sites-enabled/default; do
   if [ -f "$site" ] && grep -q 'cura-slicer' "$site"; then
     sudo sed -i '/cura-slicer/d' "$site"
     ok "Removed cura-slicer reference from $site"
-    sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || warn "nginx reload failed."
+    NGINX_RELOADED=true
   fi
 done
 
-# ── Remove web UI ─────────────────────────────────────────────────────────────
+if [ "$NGINX_RELOADED" = true ]; then
+  sudo nginx -t && sudo systemctl reload nginx && ok "nginx reloaded." \
+    || warn "nginx reload failed – check config manually."
+fi
+
+# =============================================================================
+# 5. Remove web UI
+# =============================================================================
 heading "Removing web UI"
 
 UI_DIR="/var/www/cura-slicer"
@@ -114,20 +226,49 @@ else
   info "Web UI directory not found – skipping."
 fi
 
-# ── Restart Moonraker ─────────────────────────────────────────────────────────
+# =============================================================================
+# 6. Restart Moonraker
+# =============================================================================
 heading "Restarting Moonraker"
+
+MOONRAKER_SERVICE=""
 for svc in moonraker moonraker.service; do
   if systemctl list-units --quiet --no-pager "$svc" 2>/dev/null | grep -q "$svc"; then
-    sudo systemctl restart "$svc" && ok "Moonraker restarted." && break
+    MOONRAKER_SERVICE="$svc"
+    break
   fi
 done
 
+if [ -n "$MOONRAKER_SERVICE" ]; then
+  sudo systemctl restart "$MOONRAKER_SERVICE"
+  ok "Moonraker restarted."
+else
+  warn "Could not find moonraker systemd service – restart it manually."
+fi
+
+# =============================================================================
+# Done
+# =============================================================================
 heading "Uninstall complete"
+
 echo ""
 ok "Fluidd-Cura Slicer has been removed."
 echo ""
-info "Your data is preserved at:"
-[ -d "${MOONRAKER_DATA}/cura_profiles" ]     && echo "  Profiles:    ${MOONRAKER_DATA}/cura_profiles/"
-[ -d "${MOONRAKER_DATA}/cura_definitions" ]  && echo "  Definitions: ${MOONRAKER_DATA}/cura_definitions/"
-[ -d "${MOONRAKER_DATA}/gcodes/sliced" ]     && echo "  Sliced:      ${MOONRAKER_DATA}/gcodes/sliced/"
-echo ""
+
+if [ -n "$MOONRAKER_DATA" ]; then
+  SHOW_DATA=false
+  [ -d "$MOONRAKER_DATA/cura_profiles" ]    && SHOW_DATA=true
+  [ -d "$MOONRAKER_DATA/cura_definitions" ] && SHOW_DATA=true
+  [ -d "$MOONRAKER_DATA/gcodes/sliced" ]    && SHOW_DATA=true
+
+  if [ "$SHOW_DATA" = true ]; then
+    info "Your data is preserved at:"
+    [ -d "$MOONRAKER_DATA/cura_profiles" ]    && echo "  Profiles:    $MOONRAKER_DATA/cura_profiles/"
+    [ -d "$MOONRAKER_DATA/cura_definitions" ] && echo "  Definitions: $MOONRAKER_DATA/cura_definitions/"
+    [ -d "$MOONRAKER_DATA/gcodes/sliced" ]    && echo "  Sliced:      $MOONRAKER_DATA/gcodes/sliced/"
+    echo ""
+    info "To delete this data too, run:"
+    echo "  rm -rf $MOONRAKER_DATA/cura_profiles $MOONRAKER_DATA/cura_definitions"
+    echo ""
+  fi
+fi
