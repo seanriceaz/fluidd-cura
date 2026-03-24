@@ -329,11 +329,108 @@ else
 fi
 
 # =============================================================================
+# 8. Register Cura Slicer as a Fluidd iframe panel
+#
+# Fluidd persists its camera/panel list in Moonraker's database under the
+# "fluidd" namespace (key: "cameras").  Writing there is equivalent to the
+# user manually adding an HTTP-page camera through the Fluidd UI.
+# We wait up to 60 s for Moonraker to finish starting before attempting this.
+# =============================================================================
+heading "Adding Cura Slicer panel to Fluidd"
+
+PRINTER_IP="$(hostname -I | awk '{print $1}')"
+SLICER_URL="http://${PRINTER_IP}/cura-slicer/"
+
+python3 - "$SLICER_URL" <<'PYEOF'
+import json, sys, time, uuid
+try:
+    import urllib.request as req
+    import urllib.error as uerr
+except ImportError:
+    print("WARN: Python urllib not available – skipping Fluidd auto-config")
+    sys.exit(0)
+
+MOONRAKER = "http://localhost:7125"
+slicer_url = sys.argv[1]
+
+# ── Wait for Moonraker to accept requests (up to 60 s) ──────────────────────
+info_url = f"{MOONRAKER}/server/info"
+ready = False
+for attempt in range(20):
+    try:
+        req.urlopen(info_url, timeout=3)
+        ready = True
+        break
+    except Exception:
+        time.sleep(3)
+
+if not ready:
+    print("WARN: Moonraker did not respond after 60 s – skipping Fluidd auto-config")
+    sys.exit(0)
+
+# ── Read existing cameras list from Fluidd's Moonraker DB namespace ──────────
+cameras = []
+try:
+    resp = req.urlopen(
+        f"{MOONRAKER}/server/database/item?namespace=fluidd&key=cameras",
+        timeout=5,
+    )
+    result = json.loads(resp.read()).get("result", {})
+    value = result.get("value", [])
+    cameras = value if isinstance(value, list) else []
+except uerr.HTTPError as exc:
+    if exc.code == 404:
+        cameras = []   # namespace/key doesn't exist yet – that's fine
+    else:
+        print(f"WARN: Moonraker DB read failed ({exc}) – skipping Fluidd auto-config")
+        sys.exit(0)
+except Exception as exc:
+    print(f"WARN: {exc} – skipping Fluidd auto-config")
+    sys.exit(0)
+
+# ── Skip if already registered ───────────────────────────────────────────────
+if any(c.get("url", "").rstrip("/") == slicer_url.rstrip("/") for c in cameras):
+    print("OK: Cura Slicer panel already present in Fluidd – skipping")
+    sys.exit(0)
+
+# ── Append the new entry ─────────────────────────────────────────────────────
+cameras.append({
+    "id":      str(uuid.uuid4()),
+    "name":    "Cura Slicer",
+    "type":    "http",          # renders as iframe in Fluidd
+    "url":     slicer_url,
+    "enabled": True,
+    "flipX":   False,
+    "flipY":   False,
+    "rotate":  0,
+    "height":  640,
+})
+
+# ── Write back ───────────────────────────────────────────────────────────────
+body = json.dumps({
+    "namespace": "fluidd",
+    "key":       "cameras",
+    "value":     cameras,
+}).encode()
+post = req.Request(
+    f"{MOONRAKER}/server/database/item",
+    data=body,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+try:
+    req.urlopen(post, timeout=5)
+    print("OK: Cura Slicer panel added to Fluidd dashboard")
+except Exception as exc:
+    print(f"WARN: Could not write to Moonraker DB ({exc})")
+    print("      Open Fluidd → Settings → Cameras → Add Camera")
+    print(f"      Type: HTTP page  |  URL: {slicer_url}")
+PYEOF
+
+# =============================================================================
 # Done
 # =============================================================================
 heading "Installation complete"
-
-PRINTER_IP="$(hostname -I | awk '{print $1}')"
 
 echo ""
 echo -e "${GREEN}${BOLD}Cura Slicer installed successfully!${RESET}"
@@ -341,12 +438,11 @@ echo ""
 echo "  Web UI:      http://${PRINTER_IP}/cura-slicer/"
 echo "  API:         http://${PRINTER_IP}/server/cura_slicer/status"
 echo ""
-echo -e "${BOLD}Adding the panel to Fluidd:${RESET}"
-echo "  1. Open Fluidd → Settings → Interface → Dashboard"
-echo "  2. Under 'Additional Panels' or 'Camera', add a new entry:"
-echo "       URL: http://${PRINTER_IP}/cura-slicer/"
-echo "       Type: HTTP page (iframe)"
-echo "  3. Save and reload the dashboard."
-echo ""
-echo "  Or access the slicer directly at http://${PRINTER_IP}/cura-slicer/"
+echo -e "${BOLD}Next steps:${RESET}"
+echo "  • Refresh Fluidd in your browser – the 'Cura Slicer' panel"
+echo "    should appear automatically in the Cameras section."
+echo "  • If it isn't visible, drag the Camera widget onto your"
+echo "    dashboard from Settings → Interface → Dashboard layout."
+echo "  • Import your first profile: Profiles tab → New Profile"
+echo "    (or copy one from profiles/examples/ to ~/printer_data/cura_profiles/)"
 echo ""
