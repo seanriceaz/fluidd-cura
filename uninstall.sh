@@ -111,82 +111,7 @@ PYEOF
 fi
 
 # =============================================================================
-# 3. Remove Cura Slicer panel from Fluidd's dashboard
-#
-# Fluidd stores its camera/panel list in Moonraker's database
-# (namespace=fluidd, key=cameras).  We remove our entry from that list.
-# Moonraker must still be running at this point (we restart it later).
-# =============================================================================
-heading "Removing Cura Slicer panel from Fluidd"
-
-python3 <<'PYEOF'
-import json, sys
-try:
-    import urllib.request as req
-    import urllib.error  as uerr
-except ImportError:
-    print("WARN: Python urllib not available – skipping Fluidd panel removal")
-    sys.exit(0)
-
-MOONRAKER = "http://localhost:7125"
-
-# ── Read existing cameras ────────────────────────────────────────────────────
-try:
-    resp = req.urlopen(
-        f"{MOONRAKER}/server/database/item?namespace=fluidd&key=cameras",
-        timeout=5,
-    )
-    result = json.loads(resp.read()).get("result", {})
-    cameras = result.get("value", [])
-    if not isinstance(cameras, list):
-        cameras = []
-except uerr.HTTPError as exc:
-    if exc.code == 404:
-        print("No Fluidd camera entries found in Moonraker DB – skipping.")
-        sys.exit(0)
-    print(f"WARN: Moonraker DB read failed ({exc}) – skipping Fluidd panel removal.")
-    sys.exit(0)
-except Exception as exc:
-    print(f"WARN: Could not reach Moonraker ({exc}) – skipping Fluidd panel removal.")
-    sys.exit(0)
-
-# ── Filter out the Cura Slicer entry ────────────────────────────────────────
-original_len = len(cameras)
-cameras = [
-    c for c in cameras
-    if not (
-        "cura-slicer" in c.get("url", "").lower()
-        or c.get("name", "").lower() == "cura slicer"
-    )
-]
-removed = original_len - len(cameras)
-
-if removed == 0:
-    print("Cura Slicer not found in Fluidd cameras – skipping.")
-    sys.exit(0)
-
-# ── Write back ───────────────────────────────────────────────────────────────
-body = json.dumps({
-    "namespace": "fluidd",
-    "key":       "cameras",
-    "value":     cameras,
-}).encode()
-post = req.Request(
-    f"{MOONRAKER}/server/database/item",
-    data=body,
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-try:
-    req.urlopen(post, timeout=5)
-    print(f"OK: Removed {removed} Cura Slicer entr{'y' if removed == 1 else 'ies'} from Fluidd dashboard.")
-except Exception as exc:
-    print(f"WARN: Could not write to Moonraker DB ({exc}).")
-    print("      Remove the 'Cura Slicer' camera manually in Fluidd → Settings → Cameras.")
-PYEOF
-
-# =============================================================================
-# 4. Remove nginx config
+# 3. Remove nginx config
 # =============================================================================
 heading "Removing nginx config"
 
@@ -214,7 +139,7 @@ if [ "$NGINX_RELOADED" = true ]; then
 fi
 
 # =============================================================================
-# 5. Remove web UI
+# 4. Remove web UI
 # =============================================================================
 heading "Removing web UI"
 
@@ -227,7 +152,7 @@ else
 fi
 
 # =============================================================================
-# 6. Restart Moonraker
+# 5. Restart Moonraker
 # =============================================================================
 heading "Restarting Moonraker"
 
