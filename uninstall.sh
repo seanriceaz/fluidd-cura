@@ -111,7 +111,55 @@ PYEOF
 fi
 
 # =============================================================================
-# 3. Remove nginx config
+# 3. Remove Cura Slicer panel from Fluidd dashboard
+# =============================================================================
+heading "Removing Cura Slicer from Fluidd dashboard"
+
+python3 <<'PYEOF'
+import json, sys
+import urllib.request as ureq
+import urllib.error   as uerr
+
+MOONRAKER = "http://localhost:7125"
+
+try:
+    resp    = ureq.urlopen(f"{MOONRAKER}/server/database/item?namespace=fluidd&key=cameras", timeout=5)
+    value   = json.loads(resp.read()).get("result", {}).get("value", [])
+    cameras = value if isinstance(value, list) else []
+except uerr.HTTPError as e:
+    if e.code == 404:
+        print("No Fluidd dashboard panels found — skipping.")
+        sys.exit(0)
+    print(f"WARN: DB read failed ({e}) — skipping.")
+    sys.exit(0)
+except Exception as e:
+    print(f"WARN: Could not reach Moonraker ({e}) — skipping.")
+    sys.exit(0)
+
+before  = len(cameras)
+cameras = [c for c in cameras if not (
+    "cura-slicer" in c.get("url", "").lower() or
+    c.get("name", "").lower() == "cura slicer"
+)]
+removed = before - len(cameras)
+
+if removed == 0:
+    print("Cura Slicer panel not found in Fluidd dashboard — skipping.")
+    sys.exit(0)
+
+body = json.dumps({"namespace": "fluidd", "key": "cameras", "value": cameras}).encode()
+post = ureq.Request(f"{MOONRAKER}/server/database/item", data=body,
+                    headers={"Content-Type": "application/json"}, method="POST")
+try:
+    ureq.urlopen(post, timeout=5)
+    print(f"OK: Removed Cura Slicer from Fluidd dashboard.")
+except Exception as e:
+    print(f"WARN: DB write failed ({e}).")
+    print("      Remove it manually: Fluidd → Settings → Cameras.")
+PYEOF
+
+# =============================================================================
+# 4. Remove nginx config
 # =============================================================================
 heading "Removing nginx config"
 
@@ -139,7 +187,7 @@ if [ "$NGINX_RELOADED" = true ]; then
 fi
 
 # =============================================================================
-# 4. Remove web UI
+# 5. Remove web UI
 # =============================================================================
 heading "Removing web UI"
 
@@ -152,7 +200,7 @@ else
 fi
 
 # =============================================================================
-# 5. Restart Moonraker
+# 6. Restart Moonraker
 # =============================================================================
 heading "Restarting Moonraker"
 
