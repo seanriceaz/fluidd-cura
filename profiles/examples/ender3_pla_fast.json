@@ -1,0 +1,33 @@
+{
+  "name": "ender3_pla_fast",
+  "display_name": "Ender 3 – PLA Fast",
+  "description": "High-speed draft quality for Creality Ender 3 with PLA. Good for prototyping.",
+  "printer_definition": "creality_ender3",
+  "settings": {
+    "layer_height":                   "0.28",
+    "layer_height_0":                 "0.35",
+    "wall_line_count":                "2",
+    "top_layers":                     "3",
+    "bottom_layers":                  "3",
+    "infill_sparse_density":          "15",
+    "infill_pattern":                 "lines",
+    "material_print_temperature":     "215",
+    "material_print_temperature_layer_0": "220",
+    "material_bed_temperature":       "60",
+    "material_bed_temperature_layer_0": "65",
+    "speed_print":                    "80",
+    "speed_infill":                   "100",
+    "speed_wall":                     "50",
+    "speed_topbottom":                "40",
+    "speed_travel":                   "200",
+    "retraction_enable":              "true",
+    "retraction_amount":              "5",
+    "retraction_speed":               "45",
+    "support_enable":                 "false",
+    "adhesion_type":                  "skirt",
+    "skirt_line_count":               "2",
+    "cool_fan_enabled":               "true",
+    "cool_fan_speed":                 "100",
+    "cool_min_layer_time":            "5"
+  }
+}

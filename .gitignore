@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node (if building UI locally)
+node_modules/
+dist/
+
+# Downloaded assets (fetched by install.sh)
+ui/vue.min.js
+
+# OS
+.DS_Store
+Thumbs.db

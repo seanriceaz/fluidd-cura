@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cura Slicer</title>
+  <script src="vue.min.js"></script>
+  <style>
+    /* ── Reset & base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #121212;
+      --surface:   #1e1e1e;
+      --surface2:  #2a2a2a;
+      --border:    #333;
+      --primary:   #2196f3;
+      --primary-d: #1565c0;
+      --success:   #4caf50;
+      --warn:      #ff9800;
+      --error:     #f44336;
+      --text:      #e0e0e0;
+      --text-dim:  #9e9e9e;
+      --radius:    6px;
+    }
+
+    html, body { height: 100%; font-family: 'Roboto', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+
+    /* ── Layout ── */
+    #app { display: flex; flex-direction: column; height: 100%; }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 16px; font-weight: 600; letter-spacing: .5px; }
+    header .logo { font-size: 22px; }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      transition: color .2s, border-color .2s;
+      user-select: none;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+    /* ── Content ── */
+    .content { flex: 1; overflow-y: auto; padding: 16px; }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 12px;
+    }
+
+    /* ── Form controls ── */
+    label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+
+    input[type=text], input[type=number], select, textarea {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 8px 10px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+    }
+    select option { background: var(--surface2); }
+    textarea { resize: vertical; min-height: 80px; }
+
+    .form-row { margin-bottom: 12px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 480px) { .form-grid { grid-template-columns: 1fr; } }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-primary  { background: var(--primary);  color: #fff; }
+    .btn-success  { background: var(--success);  color: #fff; }
+    .btn-danger   { background: var(--error);    color: #fff; }
+    .btn-ghost    { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-sm       { padding: 5px 10px; font-size: 12px; }
+
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+    /* ── Drop zone ── */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 32px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      color: var(--text-dim);
+    }
+    .drop-zone.dragging { border-color: var(--primary); background: rgba(33,150,243,.07); }
+    .drop-zone .dz-icon { font-size: 36px; margin-bottom: 8px; }
+    .drop-zone .dz-text { font-size: 13px; }
+    .drop-zone .dz-sub  { font-size: 11px; margin-top: 4px; }
+    input[type=file] { display: none; }
+
+    /* ── Progress bar ── */
+    .progress-wrap { margin-top: 10px; }
+    .progress-bar-bg {
+      background: var(--surface2);
+      border-radius: 4px;
+      height: 8px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: var(--primary);
+      transition: width .4s ease;
+    }
+    .progress-label { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+    /* ── Status badges ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-pending  { background: rgba(158,158,158,.2); color: var(--text-dim); }
+    .badge-slicing  { background: rgba(33,150,243,.2);  color: var(--primary); }
+    .badge-complete { background: rgba(76,175,80,.2);   color: var(--success); }
+    .badge-error    { background: rgba(244,67,54,.2);   color: var(--error); }
+
+    /* ── Profile list ── */
+    .profile-list { list-style: none; }
+    .profile-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 8px;
+      background: var(--surface2);
+    }
+    .profile-item .pi-info { flex: 1; }
+    .profile-item .pi-name { font-weight: 600; font-size: 13px; }
+    .profile-item .pi-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+    .profile-item .pi-actions { display: flex; gap: 6px; }
+
+    /* ── Job list ── */
+    .job-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 8px;
+      background: var(--surface2);
+    }
+    .job-item .ji-info { flex: 1; }
+    .job-item .ji-name { font-size: 13px; font-weight: 600; }
+    .job-item .ji-sub  { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+    /* ── Settings key-value editor ── */
+    .kv-table { width: 100%; border-collapse: collapse; }
+    .kv-table th { font-size: 11px; color: var(--text-dim); text-align: left; padding: 4px 6px; }
+    .kv-table td { padding: 4px 6px; }
+    .kv-table input { padding: 5px 8px; }
+    .kv-table .kv-del { padding: 4px; background: none; border: none; color: var(--error); cursor: pointer; font-size: 16px; }
+
+    /* ── Alert / notice ── */
+    .alert {
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+    .alert-info  { background: rgba(33,150,243,.12); border: 1px solid rgba(33,150,243,.3); }
+    .alert-error { background: rgba(244,67,54,.12);  border: 1px solid rgba(244,67,54,.3); color: var(--error); }
+    .alert-ok    { background: rgba(76,175,80,.12);  border: 1px solid rgba(76,175,80,.3);  color: var(--success); }
+
+    /* ── Chip ── */
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 12px; font-size: 11px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    .sep { height: 1px; background: var(--border); margin: 14px 0; }
+    .text-dim { color: var(--text-dim); font-size: 12px; }
+    .text-center { text-align: center; }
+    .mt-8 { margin-top: 8px; }
+    .mt-12 { margin-top: 12px; }
+    .flex { display: flex; align-items: center; }
+    .flex-between { justify-content: space-between; }
+    .gap-8 { gap: 8px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="logo">🔪</span>
+    <h1>Cura Slicer</h1>
+    <span v-if="engineVersion" class="chip" style="margin-left:auto;">
+      CuraEngine {{ engineVersion }}
+    </span>
+    <span v-if="engineVersion === null" class="chip" style="margin-left:auto;color:var(--error);">
+      ⚠ CuraEngine not found
+    </span>
+  </header>
+
+  <div class="tabs">
+    <div class="tab" :class="{active: tab==='slicer'}"   @click="tab='slicer'">   Slicer   </div>
+    <div class="tab" :class="{active: tab==='profiles'}" @click="tab='profiles'"> Profiles </div>
+    <div class="tab" :class="{active: tab==='jobs'}"     @click="tab='jobs'">     Jobs     </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ═══════════════════════════════════════════════════════ SLICER TAB -->
+    <template v-if="tab==='slicer'">
+
+      <!-- STL upload -->
+      <div class="card">
+        <div class="card-title">1 · Upload STL / Select File</div>
+
+        <div
+          class="drop-zone"
+          :class="{dragging: dragging}"
+          @click="$refs.stlInput.click()"
+          @dragover.prevent="dragging=true"
+          @dragleave="dragging=false"
+          @drop.prevent="onStlDrop"
+        >
+          <div class="dz-icon">📂</div>
+          <div v-if="!uploadedStl" class="dz-text">Drop an STL / OBJ / 3MF here, or click to browse</div>
+          <div v-else class="dz-text" style="color:var(--primary)">{{ uploadedStl.name }}</div>
+          <div class="dz-sub">Uploads to the printer's gcodes directory</div>
+        </div>
+        <input ref="stlInput" type="file" accept=".stl,.obj,.3mf" @change="onStlFileChange" />
+
+        <div v-if="uploadProgress !== null" class="progress-wrap mt-8">
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" :style="{width: uploadProgress+'%'}"></div>
+          </div>
+          <div class="progress-label">Uploading… {{ uploadProgress }}%</div>
+        </div>
+        <div v-if="uploadError" class="alert alert-error mt-8">{{ uploadError }}</div>
+        <div v-if="uploadedStlPath" class="alert alert-ok mt-8">
+          ✓ Ready to slice: <strong>{{ uploadedStlPath }}</strong>
+        </div>
+      </div>
+
+      <!-- Profile selection -->
+      <div class="card">
+        <div class="card-title">2 · Select Profile</div>
+        <div class="form-row">
+          <label>Cura Profile</label>
+          <select v-model="selectedProfile">
+            <option value="">— choose a profile —</option>
+            <option v-for="p in profiles" :key="p.name" :value="p.name">
+              {{ p.display_name || p.name }}
+              <template v-if="p.printer_definition"> · {{ p.printer_definition }}</template>
+            </option>
+          </select>
+        </div>
+        <div class="text-dim" v-if="!profiles.length">
+          No profiles yet – go to the <strong>Profiles</strong> tab to create one.
+        </div>
+
+        <!-- Override settings -->
+        <div v-if="selectedProfile" class="mt-12">
+          <div class="flex flex-between gap-8" style="margin-bottom:8px;">
+            <span class="text-dim">Override Settings (optional)</span>
+            <button class="btn btn-ghost btn-sm" @click="addOverride">+ Add</button>
+          </div>
+          <table class="kv-table">
+            <thead>
+              <tr><th>Key</th><th>Value</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in overrides" :key="i">
+                <td><input v-model="row.key"   type="text" placeholder="layer_height" /></td>
+                <td><input v-model="row.value" type="text" placeholder="0.2" /></td>
+                <td><button class="kv-del" @click="removeOverride(i)">✕</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Slice options -->
+      <div class="card">
+        <div class="card-title">3 · Slice</div>
+        <div class="form-row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" v-model="printAfter" />
+            Start printing automatically when slicing completes
+          </label>
+        </div>
+
+        <div v-if="sliceError" class="alert alert-error">{{ sliceError }}</div>
+
+        <div v-if="activeJob" class="progress-wrap" style="margin-bottom:12px;">
+          <div class="flex flex-between gap-8" style="margin-bottom:4px;">
+            <span class="badge" :class="'badge-'+activeJob.status">{{ activeJob.status }}</span>
+            <span class="text-dim">{{ activeJob.progress_stage }}</span>
+            <span class="text-dim">{{ Math.round(activeJob.progress * 100) }}%</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill"
+                 :style="{width: (activeJob.progress*100)+'%',
+                          background: activeJob.status==='error' ? 'var(--error)' :
+                                      activeJob.status==='complete' ? 'var(--success)' : 'var(--primary)'}">
+            </div>
+          </div>
+          <div v-if="activeJob.status==='error'" class="alert alert-error mt-8">
+            {{ activeJob.error }}
+          </div>
+          <div v-if="activeJob.status==='complete'" class="alert alert-ok mt-8">
+            ✓ Sliced: <strong>{{ activeJob.output }}</strong>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button
+            class="btn btn-primary"
+            :disabled="!uploadedStlPath || !selectedProfile || isSlicing"
+            @click="startSlice"
+          >
+            <template v-if="isSlicing">⏳ Slicing…</template>
+            <template v-else>▶ Slice Now</template>
+          </button>
+          <button
+            v-if="activeJob && activeJob.status==='complete'"
+            class="btn btn-success"
+            @click="printFile(activeJob.output)"
+          >
+            🖨 Print Sliced File
+          </button>
+        </div>
+      </div>
+
+    </template>
+
+    <!-- ═══════════════════════════════════════════════════ PROFILES TAB -->
+    <template v-else-if="tab==='profiles'">
+
+      <div class="card">
+        <div class="flex flex-between gap-8" style="margin-bottom:12px;">
+          <div class="card-title" style="margin:0;">Profiles</div>
+          <button class="btn btn-primary btn-sm" @click="openProfileEditor()">+ New Profile</button>
+        </div>
+
+        <div v-if="!profiles.length" class="text-dim text-center" style="padding:20px 0;">
+          No profiles yet. Create one below or upload a .curaprofile file.
+        </div>
+
+        <ul class="profile-list">
+          <li v-for="p in profiles" :key="p.name" class="profile-item">
+            <div class="pi-info">
+              <div class="pi-name">{{ p.display_name || p.name }}</div>
+              <div class="pi-desc">
+                <span v-if="p.printer_definition">{{ p.printer_definition }}</span>
+                <span v-if="p.description"> · {{ p.description }}</span>
+              </div>
+            </div>
+            <div class="pi-actions">
+              <button class="btn btn-ghost btn-sm" @click="openProfileEditor(p.name)">Edit</button>
+              <button class="btn btn-danger btn-sm" @click="deleteProfile(p.name)">Delete</button>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Profile editor -->
+      <div v-if="profileEditor.open" class="card" style="border-color:var(--primary);">
+        <div class="card-title">{{ profileEditor.isNew ? 'New Profile' : 'Edit Profile' }}</div>
+
+        <!-- Upload .curaprofile -->
+        <div class="form-row">
+          <label>Import from .curaprofile file (optional – fills fields below)</label>
+          <div class="flex gap-8">
+            <button class="btn btn-ghost btn-sm" @click="$refs.cpInput.click()">
+              📎 {{ profileEditor.curaprofileName || 'Choose .curaprofile…' }}
+            </button>
+            <span v-if="profileEditor.curaprofileName" class="text-dim">imported</span>
+          </div>
+          <input ref="cpInput" type="file" accept=".curaprofile,.zip" @change="onCuraProfileFile" />
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Profile Name (ID) *</label>
+            <input v-model="profileEditor.name" type="text" placeholder="pla_standard" :disabled="!profileEditor.isNew" />
+          </div>
+          <div class="form-row">
+            <label>Display Name</label>
+            <input v-model="profileEditor.display_name" type="text" placeholder="PLA Standard" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Description</label>
+          <input v-model="profileEditor.description" type="text" placeholder="Standard PLA settings" />
+        </div>
+        <div class="form-row">
+          <label>Printer Definition</label>
+          <select v-model="profileEditor.printer_definition">
+            <option value="">— none / inherit from system —</option>
+            <option v-for="d in definitions" :key="d" :value="d">{{ d }}</option>
+          </select>
+        </div>
+
+        <div class="sep"></div>
+        <div class="card-title" style="margin-bottom:8px;">Slicer Settings</div>
+
+        <table class="kv-table">
+          <thead><tr><th>Setting Key</th><th>Value</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="(row, i) in profileEditor.settings" :key="i">
+              <td><input v-model="row.key"   type="text" placeholder="layer_height" /></td>
+              <td><input v-model="row.value" type="text" placeholder="0.2" /></td>
+              <td><button class="kv-del" @click="profileEditor.settings.splice(i,1)">✕</button></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="mt-8">
+          <button class="btn btn-ghost btn-sm" @click="profileEditor.settings.push({key:'',value:''})">
+            + Add Setting
+          </button>
+        </div>
+
+        <div v-if="profileEditor.error" class="alert alert-error mt-8">{{ profileEditor.error }}</div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" @click="saveProfile">
+            {{ profileEditor.isNew ? 'Create Profile' : 'Save Changes' }}
+          </button>
+          <button class="btn btn-ghost" @click="profileEditor.open=false">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Upload printer definition -->
+      <div class="card">
+        <div class="card-title">Printer Definitions</div>
+        <div class="text-dim" style="margin-bottom:10px;">
+          Definitions (.def.json) tell CuraEngine how your printer is configured.
+          System-installed definitions (from cura-engine package) are listed automatically.
+        </div>
+        <div v-if="definitions.length">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+            <span class="chip" v-for="d in definitions" :key="d">{{ d }}</span>
+          </div>
+        </div>
+        <div class="flex gap-8">
+          <button class="btn btn-ghost btn-sm" @click="$refs.defInput.click()">
+            📎 Upload .def.json
+          </button>
+        </div>
+        <input ref="defInput" type="file" accept=".json" @change="onDefinitionFile" />
+        <div v-if="defUploadMsg" class="alert mt-8" :class="defUploadOk ? 'alert-ok' : 'alert-error'">
+          {{ defUploadMsg }}
+        </div>
+      </div>
+
+    </template>
+
+    <!-- ═══════════════════════════════════════════════════════ JOBS TAB -->
+    <template v-else-if="tab==='jobs'">
+      <div class="card">
+        <div class="flex flex-between gap-8" style="margin-bottom:12px;">
+          <div class="card-title" style="margin:0;">Recent Jobs</div>
+          <button class="btn btn-ghost btn-sm" @click="loadJobs">↻ Refresh</button>
+        </div>
+
+        <div v-if="!jobs.length" class="text-dim text-center" style="padding:20px 0;">
+          No slice jobs yet.
+        </div>
+
+        <div v-for="j in jobs" :key="j.id" class="job-item">
+          <div class="ji-info">
+            <div class="ji-name">{{ j.stl }}</div>
+            <div class="ji-sub">
+              Profile: {{ j.profile }} ·
+              <span v-if="j.output">Output: {{ j.output }}</span>
+              <span v-if="j.error" style="color:var(--error)"> · {{ j.error }}</span>
+            </div>
+            <div v-if="j.status==='slicing'" class="progress-wrap mt-8" style="max-width:300px;">
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill" :style="{width:(j.progress*100)+'%'}"></div>
+              </div>
+              <div class="progress-label">{{ j.progress_stage }} {{ Math.round(j.progress*100) }}%</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div class="badge" :class="'badge-'+j.status">{{ j.status }}</div>
+            <div v-if="j.status==='complete'" class="btn-row" style="margin-top:6px;justify-content:flex-end;">
+              <button class="btn btn-success btn-sm" @click="printFile(j.output)">🖨 Print</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+  </div><!-- /content -->
+</div><!-- /app -->
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, onUnmounted } = Vue;
+
+// Auto-detect Moonraker origin: if this page is served from the same host as moonraker,
+// use the current origin; otherwise fall back to the Raspberry Pi's default port.
+const MOONRAKER = (() => {
+  const origin = window.location.origin;
+  // If served by nginx on the same host, moonraker is at the same origin
+  return origin;
+})();
+
+async function api(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(MOONRAKER + path, opts);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error?.message || JSON.stringify(json));
+  return json.result;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+createApp({
+  setup() {
+    const tab = ref('slicer');
+
+    // ── Status ──
+    const engineVersion = ref(undefined); // undefined = loading, null = not found
+    async function loadStatus() {
+      try {
+        const s = await api('GET', '/server/cura_slicer/status');
+        engineVersion.value = s.cura_engine_found ? s.cura_engine_version : null;
+      } catch { engineVersion.value = null; }
+    }
+
+    // ── Profiles ──
+    const profiles = ref([]);
+    const definitions = ref([]);
+
+    async function loadProfiles() {
+      try {
+        const r = await api('GET', '/server/cura_slicer/profiles');
+        profiles.value = r.profiles;
+      } catch(e) { console.error(e); }
+    }
+    async function loadDefinitions() {
+      try {
+        const r = await api('GET', '/server/cura_slicer/definitions');
+        definitions.value = r.definitions;
+      } catch(e) { console.error(e); }
+    }
+    async function deleteProfile(name) {
+      if (!confirm(`Delete profile "${name}"?`)) return;
+      try {
+        await api('DELETE', `/server/cura_slicer/profiles/${encodeURIComponent(name)}`);
+        await loadProfiles();
+      } catch(e) { alert(e.message); }
+    }
+
+    // ── Profile editor ──
+    const profileEditor = reactive({
+      open: false,
+      isNew: true,
+      name: '',
+      display_name: '',
+      description: '',
+      printer_definition: '',
+      settings: [],
+      curaprofileName: '',
+      curaprofileB64: '',
+      error: '',
+    });
+
+    function openProfileEditor(name) {
+      profileEditor.error = '';
+      profileEditor.curaprofileName = '';
+      profileEditor.curaprofileB64 = '';
+      if (!name) {
+        profileEditor.isNew = true;
+        profileEditor.name = '';
+        profileEditor.display_name = '';
+        profileEditor.description = '';
+        profileEditor.printer_definition = '';
+        profileEditor.settings = [];
+      } else {
+        profileEditor.isNew = false;
+        const p = profiles.value.find(x => x.name === name) || {};
+        profileEditor.name = name;
+        profileEditor.display_name = p.display_name || '';
+        profileEditor.description = p.description || '';
+        profileEditor.printer_definition = p.printer_definition || '';
+        // Load full profile for settings
+        api('GET', `/server/cura_slicer/profiles/${encodeURIComponent(name)}`)
+          .then(full => {
+            profileEditor.settings = Object.entries(full.settings || {})
+              .map(([key, value]) => ({ key, value }));
+            profileEditor.printer_definition = full.printer_definition || '';
+            profileEditor.display_name = full.display_name || '';
+            profileEditor.description = full.description || '';
+          })
+          .catch(() => { profileEditor.settings = []; });
+      }
+      profileEditor.open = true;
+    }
+
+    async function onCuraProfileFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      profileEditor.curaprofileName = file.name;
+      profileEditor.curaprofileB64 = await fileToBase64(file);
+      // Pre-fill name from filename
+      if (!profileEditor.display_name) {
+        profileEditor.display_name = file.name.replace(/\.curaprofile$/i, '');
+      }
+    }
+
+    async function saveProfile() {
+      profileEditor.error = '';
+      const name = profileEditor.name.trim();
+      if (!name) { profileEditor.error = 'Profile name is required.'; return; }
+      const settingsObj = {};
+      for (const { key, value } of profileEditor.settings) {
+        if (key.trim()) settingsObj[key.trim()] = value;
+      }
+      const body = {
+        name,
+        display_name: profileEditor.display_name,
+        description: profileEditor.description,
+        printer_definition: profileEditor.printer_definition,
+        settings: settingsObj,
+      };
+      if (profileEditor.curaprofileB64) {
+        body.curaprofile_b64 = profileEditor.curaprofileB64;
+      }
+      try {
+        const method = profileEditor.isNew ? 'POST' : 'PUT';
+        const path = profileEditor.isNew
+          ? '/server/cura_slicer/profiles'
+          : `/server/cura_slicer/profiles/${encodeURIComponent(name)}`;
+        await api(method, path, body);
+        await loadProfiles();
+        profileEditor.open = false;
+      } catch(e) {
+        profileEditor.error = e.message;
+      }
+    }
+
+    // ── Definition upload ──
+    const defUploadMsg = ref('');
+    const defUploadOk  = ref(true);
+
+    async function onDefinitionFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const b64 = await fileToBase64(file);
+        const name = file.name.replace(/\.def\.json$/i, '').replace(/\.json$/i, '');
+        await api('POST', '/server/cura_slicer/definitions', { name, content_b64: b64 });
+        defUploadMsg.value = `✓ Definition "${name}" uploaded`;
+        defUploadOk.value = true;
+        await loadDefinitions();
+      } catch(e) {
+        defUploadMsg.value = e.message;
+        defUploadOk.value = false;
+      }
+    }
+
+    // ── Slicer ──
+    const dragging = ref(false);
+    const uploadedStl = ref(null);
+    const uploadedStlPath = ref('');
+    const uploadProgress = ref(null);
+    const uploadError = ref('');
+    const selectedProfile = ref('');
+    const overrides = ref([]);
+    const printAfter = ref(false);
+    const sliceError = ref('');
+    const activeJob = ref(null);
+    const isSlicing = computed(() =>
+      activeJob.value && ['pending','slicing'].includes(activeJob.value.status));
+
+    function addOverride() { overrides.value.push({ key: '', value: '' }); }
+    function removeOverride(i) { overrides.value.splice(i, 1); }
+
+    async function uploadStl(file) {
+      uploadError.value = '';
+      uploadProgress.value = 0;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('root', 'gcodes');
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', MOONRAKER + '/server/files/upload');
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) uploadProgress.value = Math.round(e.loaded/e.total*100);
+        };
+        xhr.onload = () => {
+          uploadProgress.value = null;
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const r = JSON.parse(xhr.responseText);
+            resolve(r.result?.item?.path || file.name);
+          } else {
+            try {
+              const r = JSON.parse(xhr.responseText);
+              reject(new Error(r.error?.message || 'Upload failed'));
+            } catch { reject(new Error('Upload failed')); }
+          }
+        };
+        xhr.onerror = () => { uploadProgress.value = null; reject(new Error('Network error')); };
+        xhr.send(formData);
+      });
+    }
+
+    async function onStlDrop(e) {
+      dragging.value = false;
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      await handleStlFile(file);
+    }
+
+    async function onStlFileChange(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      await handleStlFile(file);
+    }
+
+    async function handleStlFile(file) {
+      uploadedStl.value = file;
+      uploadedStlPath.value = '';
+      uploadError.value = '';
+      try {
+        const path = await uploadStl(file);
+        uploadedStlPath.value = path;
+      } catch(e) {
+        uploadError.value = e.message;
+        uploadedStl.value = null;
+      }
+    }
+
+    async function startSlice() {
+      sliceError.value = '';
+      activeJob.value = null;
+      const settings = {};
+      for (const { key, value } of overrides.value) {
+        if (key.trim()) settings[key.trim()] = value;
+      }
+      try {
+        const r = await api('POST', '/server/cura_slicer/slice', {
+          filename: uploadedStlPath.value,
+          profile: selectedProfile.value,
+          settings,
+          print_after: printAfter.value,
+        });
+        activeJob.value = { id: r.job_id, status: 'pending', progress: 0, progress_stage: '' };
+        pollJob(r.job_id);
+      } catch(e) {
+        sliceError.value = e.message;
+      }
+    }
+
+    let pollTimer = null;
+    function pollJob(jobId) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(async () => {
+        try {
+          const j = await api('GET', `/server/cura_slicer/jobs/${jobId}`);
+          activeJob.value = j;
+          if (['pending','slicing'].includes(j.status)) pollJob(jobId);
+        } catch(e) { console.error(e); }
+      }, 1000);
+    }
+
+    async function printFile(path) {
+      try {
+        await api('POST', '/printer/print/start', { filename: path });
+      } catch(e) { alert('Could not start print: ' + e.message); }
+    }
+
+    // ── Jobs tab ──
+    const jobs = ref([]);
+    async function loadJobs() {
+      try {
+        const r = await api('GET', '/server/cura_slicer/jobs');
+        jobs.value = r.jobs;
+      } catch(e) { console.error(e); }
+    }
+
+    // ── Init ──
+    onMounted(() => {
+      loadStatus();
+      loadProfiles();
+      loadDefinitions();
+      loadJobs();
+    });
+    onUnmounted(() => clearTimeout(pollTimer));
+
+    return {
+      tab,
+      engineVersion,
+      profiles, definitions, deleteProfile,
+      openProfileEditor, profileEditor, saveProfile, onCuraProfileFile,
+      defUploadMsg, defUploadOk, onDefinitionFile,
+      dragging, uploadedStl, uploadedStlPath, uploadProgress, uploadError,
+      onStlDrop, onStlFileChange,
+      selectedProfile, overrides, addOverride, removeOverride,
+      printAfter, sliceError, activeJob, isSlicing,
+      startSlice, printFile,
+      jobs, loadJobs,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+{
+  "name": "generic_pla_standard",
+  "display_name": "Generic FDM – PLA Standard",
+  "description": "A generic starting-point profile for any FDM printer using PLA. Adjust temperatures and speeds for your specific printer.",
+  "printer_definition": "",
+  "settings": {
+    "layer_height":                   "0.2",
+    "layer_height_0":                 "0.3",
+    "wall_line_count":                "3",
+    "top_layers":                     "4",
+    "bottom_layers":                  "4",
+    "infill_sparse_density":          "20",
+    "infill_pattern":                 "grid",
+    "material_print_temperature":     "210",
+    "material_print_temperature_layer_0": "215",
+    "material_bed_temperature":       "60",
+    "material_bed_temperature_layer_0": "65",
+    "speed_print":                    "50",
+    "speed_infill":                   "60",
+    "speed_wall":                     "30",
+    "speed_topbottom":                "30",
+    "speed_travel":                   "150",
+    "retraction_enable":              "true",
+    "retraction_amount":              "5",
+    "retraction_speed":               "40",
+    "support_enable":                 "false",
+    "adhesion_type":                  "skirt",
+    "cool_fan_enabled":               "true",
+    "cool_fan_speed":                 "100"
+  }
+}
