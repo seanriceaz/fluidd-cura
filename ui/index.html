@@ -254,9 +254,10 @@
   </header>
 
   <div class="tabs">
-    <div class="tab" :class="{active: tab==='slicer'}"   @click="tab='slicer'">   Slicer   </div>
-    <div class="tab" :class="{active: tab==='profiles'}" @click="tab='profiles'"> Profiles </div>
-    <div class="tab" :class="{active: tab==='jobs'}"     @click="tab='jobs'">     Jobs     </div>
+    <div class="tab" :class="{active: tab==='slicer'}"    @click="tab='slicer'">    Slicer   </div>
+    <div class="tab" :class="{active: tab==='profiles'}"  @click="tab='profiles'">  Profiles </div>
+    <div class="tab" :class="{active: tab==='jobs'}"      @click="tab='jobs'">      Jobs     </div>
+    <div class="tab" :class="{active: tab==='settings'}"  @click="tab='settings'">  Settings </div>
   </div>
 
   <div class="content">
@@ -548,6 +549,62 @@
       </div>
     </template>
 
+    <!-- ═══════════════════════════════════════════════ SETTINGS TAB -->
+    <template v-else-if="tab==='settings'">
+
+      <!-- Engine -->
+      <div class="card">
+        <div class="card-title">CuraEngine</div>
+        <div class="form-row">
+          <label>CuraEngine Path</label>
+          <input type="text" v-model="settingsForm.cura_engine_path"
+                 placeholder="CuraEngine  (or full path, e.g. /usr/bin/CuraEngine)" />
+          <div class="text-dim mt-8">
+            Name or full path of the CuraEngine binary. Use <code>CuraEngine</code> if it is on
+            your PATH, or specify an absolute path.
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Detected Version</label>
+          <div class="flex gap-8">
+            <span v-if="settingsStatus.cura_engine_found" class="badge badge-complete">
+              {{ settingsStatus.cura_engine_version }}
+            </span>
+            <span v-else class="badge badge-error">Not found</span>
+            <button class="btn btn-ghost btn-sm" @click="loadSettings">↻ Recheck</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Paths (read-only info) -->
+      <div class="card">
+        <div class="card-title">Data Directories</div>
+        <div class="form-row">
+          <label>Profiles Directory</label>
+          <input type="text" :value="settingsStatus.profiles_dir" readonly style="opacity:.7;" />
+        </div>
+        <div class="form-row">
+          <label>Sliced G-Code Output Directory</label>
+          <input type="text" :value="settingsStatus.sliced_dir" readonly style="opacity:.7;" />
+        </div>
+        <div class="text-dim">These paths are determined by Moonraker's data directory and cannot be changed here.</div>
+      </div>
+
+      <!-- Save / feedback -->
+      <div class="card">
+        <div v-if="settingsSaveMsg" class="alert mt-8 mb-12"
+             :class="settingsSaveOk ? 'alert-ok' : 'alert-error'" style="margin-bottom:12px;">
+          {{ settingsSaveMsg }}
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" :disabled="settingsSaving" @click="saveSettings">
+            {{ settingsSaving ? 'Saving…' : '💾 Save Settings' }}
+          </button>
+        </div>
+      </div>
+
+    </template>
+
   </div><!-- /content -->
 </div><!-- /app -->
 
@@ -696,7 +753,7 @@ createApp({
         body.curaprofile_b64 = profileEditor.curaprofileB64;
       }
       try {
-        const method = profileEditor.isNew ? 'POST' : 'PUT';
+        const method = 'POST';
         const path = profileEditor.isNew
           ? '/server/cura_slicer/profiles'
           : `/server/cura_slicer/profiles/${encodeURIComponent(name)}`;
@@ -848,12 +905,59 @@ createApp({
       } catch(e) { console.error(e); }
     }
 
+    // ── Settings tab ──
+    const settingsForm = reactive({ cura_engine_path: '' });
+    const settingsStatus = reactive({
+      cura_engine_found: null,
+      cura_engine_version: '',
+      profiles_dir: '',
+      sliced_dir: '',
+    });
+    const settingsSaving  = ref(false);
+    const settingsSaveMsg = ref('');
+    const settingsSaveOk  = ref(true);
+
+    async function loadSettings() {
+      try {
+        const r = await api('GET', '/server/cura_slicer/settings');
+        settingsForm.cura_engine_path = r.cura_engine_path || '';
+        settingsStatus.cura_engine_found   = r.cura_engine_found;
+        settingsStatus.cura_engine_version = r.cura_engine_version || '';
+        settingsStatus.profiles_dir = r.profiles_dir || '';
+        settingsStatus.sliced_dir   = r.sliced_dir   || '';
+      } catch(e) { console.error('loadSettings:', e); }
+    }
+
+    async function saveSettings() {
+      settingsSaving.value  = true;
+      settingsSaveMsg.value = '';
+      try {
+        const r = await api('POST', '/server/cura_slicer/settings', {
+          cura_engine_path: settingsForm.cura_engine_path,
+        });
+        settingsStatus.cura_engine_found   = r.cura_engine_found;
+        settingsStatus.cura_engine_version = r.cura_engine_version || '';
+        settingsSaveOk.value  = true;
+        settingsSaveMsg.value = r.cura_engine_found
+          ? `Settings saved. CuraEngine ${r.cura_engine_version} detected.`
+          : 'Settings saved, but CuraEngine was not found at the given path.';
+        // Refresh the header version chip
+        await loadStatus();
+      } catch(e) {
+        settingsSaveOk.value  = false;
+        settingsSaveMsg.value = e.message;
+      } finally {
+        settingsSaving.value = false;
+      }
+    }
+
     // ── Init ──
     onMounted(() => {
       loadStatus();
       loadProfiles();
       loadDefinitions();
       loadJobs();
+      loadSettings();
     });
     onUnmounted(() => clearTimeout(pollTimer));
 
@@ -869,6 +973,8 @@ createApp({
       printAfter, sliceError, activeJob, isSlicing,
       startSlice, printFile,
       jobs, loadJobs,
+      settingsForm, settingsStatus, settingsSaving, settingsSaveMsg, settingsSaveOk,
+      loadSettings, saveSettings,
     };
   }
 }).mount('#app');

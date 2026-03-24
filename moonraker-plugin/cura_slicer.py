@@ -60,6 +60,10 @@ class CuraSlicer:
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._job_order: List[str] = []
 
+        # Persistent settings file (overrides moonraker.conf values at runtime)
+        self._settings_path = data_path / "cura_slicer_settings.json"
+        self._apply_saved_settings()
+
         # Register HTTP endpoints
         self.server.register_endpoint(
             "/server/cura_slicer/status",
@@ -101,6 +105,11 @@ class CuraSlicer:
             ["GET", "DELETE"],
             self._handle_job,
         )
+        self.server.register_endpoint(
+            "/server/cura_slicer/settings",
+            ["GET", "POST"],
+            self._handle_settings,
+        )
 
         logger.info("CuraSlicer component initialized")
 
@@ -134,6 +143,65 @@ class CuraSlicer:
             return match.group(1) if match else output or "unknown"
         except (FileNotFoundError, asyncio.TimeoutError, OSError):
             return None
+
+    # -------------------------------------------------------------------------
+    # Settings
+    # -------------------------------------------------------------------------
+
+    def _apply_saved_settings(self) -> None:
+        """Load persisted settings and apply them over the config defaults."""
+        if not self._settings_path.exists():
+            return
+        try:
+            with open(self._settings_path) as f:
+                saved = json.load(f)
+            if "cura_engine_path" in saved:
+                self.cura_engine = saved["cura_engine_path"]
+        except Exception as exc:
+            logger.warning(f"Could not load saved settings: {exc}")
+
+    async def _handle_settings(self, web_request: WebRequest) -> Dict:
+        method = web_request.get_action().name
+
+        if method == "GET":
+            version = await self._get_engine_version()
+            return {
+                "cura_engine_path": self.cura_engine,
+                "cura_engine_version": version,
+                "cura_engine_found": version is not None,
+                "profiles_dir": str(self.profiles_dir),
+                "sliced_dir": str(self.sliced_dir),
+            }
+
+        # POST – update settings
+        body = web_request.get_json_body()
+        saved: Dict[str, Any] = {}
+
+        if "cura_engine_path" in body:
+            path_val = str(body["cura_engine_path"]).strip()
+            if path_val:
+                self.cura_engine = path_val
+                saved["cura_engine_path"] = path_val
+
+        # Persist to disk
+        existing: Dict[str, Any] = {}
+        if self._settings_path.exists():
+            try:
+                with open(self._settings_path) as f:
+                    existing = json.load(f)
+            except Exception:
+                pass
+        existing.update(saved)
+        with open(self._settings_path, "w") as f:
+            json.dump(existing, f, indent=2)
+
+        logger.info(f"Settings updated: {saved}")
+        version = await self._get_engine_version()
+        return {
+            "cura_engine_path": self.cura_engine,
+            "cura_engine_version": version,
+            "cura_engine_found": version is not None,
+        }
 
     # -------------------------------------------------------------------------
     # Profiles
