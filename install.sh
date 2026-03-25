@@ -203,12 +203,13 @@ PLUGIN_DEST="$COMPONENTS_DIR/cura_slicer.py"
 
 [ -f "$PLUGIN_SRC" ] || die "Plugin source not found: $PLUGIN_SRC"
 
-if [ -f "$PLUGIN_DEST" ]; then
-  info "Existing plugin found – replacing."
+# Remove any previously copied file so we can replace it with a symlink
+if [ -e "$PLUGIN_DEST" ] || [ -L "$PLUGIN_DEST" ]; then
+  info "Existing plugin found – replacing with symlink."
+  sudo rm -f "$PLUGIN_DEST"
 fi
-sudo cp "$PLUGIN_SRC" "$PLUGIN_DEST"
-sudo chown root:root "$PLUGIN_DEST" 2>/dev/null || true
-ok "Plugin installed: $PLUGIN_DEST"
+sudo ln -s "$PLUGIN_SRC" "$PLUGIN_DEST"
+ok "Plugin symlinked: $PLUGIN_DEST -> $PLUGIN_SRC"
 
 # =============================================================================
 # 4. Configure moonraker.conf

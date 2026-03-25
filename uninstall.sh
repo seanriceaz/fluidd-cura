@@ -49,8 +49,8 @@ done
 
 if [ -n "$MOONRAKER_DIR" ]; then
   PLUGIN="$MOONRAKER_DIR/moonraker/components/cura_slicer.py"
-  if [ -f "$PLUGIN" ]; then
-    sudo rm "$PLUGIN"
+  if [ -f "$PLUGIN" ] || [ -L "$PLUGIN" ]; then
+    sudo rm -f "$PLUGIN"
     ok "Removed $PLUGIN"
   else
     info "Plugin not found at $PLUGIN – skipping."
