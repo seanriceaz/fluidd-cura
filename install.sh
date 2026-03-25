@@ -237,6 +237,22 @@ EOF
   ok "Section added to $MOONRAKER_CONF"
 fi
 
+if grep -q '^\[update_manager cura_slicer\]' "$MOONRAKER_CONF"; then
+  ok "[update_manager cura_slicer] already present in moonraker.conf – skipping."
+else
+  info "Adding [update_manager cura_slicer] section to moonraker.conf…"
+  cat >> "$MOONRAKER_CONF" <<EOF
+
+[update_manager cura_slicer]
+type: git_repo
+primary_branch: main
+path: ${SCRIPT_DIR}
+origin: https://github.com/seanriceaz/fluidd-cura.git
+is_system_service: False
+EOF
+  ok "Update manager section added to $MOONRAKER_CONF"
+fi
+
 # =============================================================================
 # 5. Deploy web UI
 # =============================================================================
