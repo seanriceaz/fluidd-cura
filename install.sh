@@ -62,16 +62,23 @@ ENGINE_OK=false
 
 check_engine() {
   local bin="$1"
-  if ! command -v "$bin" &>/dev/null && [ ! -x "$bin" ]; then return 1; fi
-  local ver
-  ver="$("$bin" --version 2>&1 | grep -oP '\d+\.\d+' | head -1)"
-  local major="${ver%%.*}"
-  if [ -z "$major" ] || [ "$major" -lt "$MIN_CURA_MAJOR" ] 2>/dev/null; then
-    warn "Found $bin but version '$ver' is below $MIN_CURA_MAJOR.x"
+  local resolved
+  if command -v "$bin" &>/dev/null; then
+    resolved="$(command -v "$bin")"
+  elif [ -x "$bin" ]; then
+    resolved="$bin"
+  else
     return 1
   fi
-  ok "Found CuraEngine $ver at $bin"
-  CURA_BIN="$bin"
+  local ver
+  ver="$("$resolved" --version 2>&1 | grep -oP '\d+\.\d+' | head -1)"
+  local major="${ver%%.*}"
+  if [ -z "$major" ] || [ "$major" -lt "$MIN_CURA_MAJOR" ] 2>/dev/null; then
+    warn "Found $resolved but version '$ver' is below $MIN_CURA_MAJOR.x"
+    return 1
+  fi
+  ok "Found CuraEngine $ver at $resolved"
+  CURA_BIN="$resolved"
   ENGINE_OK=true
   return 0
 }
