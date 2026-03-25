@@ -174,7 +174,7 @@ class CuraSlicer:
             }
 
         # POST – update settings
-        body = web_request.get_json_body()
+        body = web_request.get_args()
         saved: Dict[str, Any] = {}
 
         if "cura_engine_path" in body:
@@ -242,7 +242,7 @@ class CuraSlicer:
             return {"profiles": profiles}
 
         # POST – create or replace a profile
-        body = web_request.get_json_body()
+        body = web_request.get_args()
         return await self._save_profile(body)
 
     async def _handle_profile(self, web_request: WebRequest) -> Any:
@@ -264,7 +264,7 @@ class CuraSlicer:
             return {"deleted": profile_name}
 
         # POST – update
-        body = web_request.get_json_body()
+        body = web_request.get_args()
         body["name"] = profile_name
         return await self._save_profile(body)
 
@@ -373,7 +373,7 @@ class CuraSlicer:
 
         # POST – upload a definition JSON (base64-encoded)
         import base64
-        body = web_request.get_json_body()
+        body = web_request.get_args()
         def_name = body.get("name", "").strip()
         content_b64 = body.get("content_b64", "")
         if not def_name or not content_b64:
@@ -417,7 +417,7 @@ class CuraSlicer:
     # -------------------------------------------------------------------------
 
     async def _handle_slice(self, web_request: WebRequest) -> Dict:
-        body = web_request.get_json_body()
+        body = web_request.get_args()
 
         stl_filename: str = body.get("filename", "").strip()
         profile_name: str = body.get("profile", "").strip()
