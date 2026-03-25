@@ -270,6 +270,39 @@ sudo chown -R www-data:www-data "$UI_DEST" 2>/dev/null || true
 ok "UI deployed to $UI_DEST"
 
 # =============================================================================
+# 5b. Seed example profiles
+# =============================================================================
+heading "Seeding example profiles"
+
+PROFILES_SRC="$SCRIPT_DIR/profiles/examples"
+PROFILES_DEST=""
+if [ -n "$MOONRAKER_DATA" ]; then
+  PROFILES_DEST="$MOONRAKER_DATA/cura_profiles"
+fi
+
+if [ -z "$PROFILES_DEST" ]; then
+  warn "Could not determine printer_data path – skipping example profiles."
+  info "Copy manually: cp $PROFILES_SRC/*.json ~/printer_data/cura_profiles/"
+elif [ ! -d "$PROFILES_SRC" ] || [ -z "$(ls "$PROFILES_SRC"/*.json 2>/dev/null)" ]; then
+  warn "No example profiles found in $PROFILES_SRC – skipping."
+else
+  mkdir -p "$PROFILES_DEST"
+  installed=0
+  for src_file in "$PROFILES_SRC"/*.json; do
+    dest_file="$PROFILES_DEST/$(basename "$src_file")"
+    if [ -f "$dest_file" ]; then
+      info "Skipping existing profile: $(basename "$src_file")"
+    else
+      cp "$src_file" "$dest_file"
+      ok "Installed profile: $(basename "$src_file" .json)"
+      installed=$((installed + 1))
+    fi
+  done
+  [ "$installed" -gt 0 ] && ok "$installed example profile(s) installed to $PROFILES_DEST" \
+                          || info "All example profiles already present."
+fi
+
+# =============================================================================
 # 6. Nginx configuration
 # =============================================================================
 if [ "$DO_NGINX" = true ]; then
