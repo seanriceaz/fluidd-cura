@@ -161,7 +161,7 @@ class CuraSlicer:
             logger.warning(f"Could not load saved settings: {exc}")
 
     async def _handle_settings(self, web_request: WebRequest) -> Dict:
-        method = web_request.get_action().name
+        method = web_request.get_action()
 
         if method == "GET":
             version = await self._get_engine_version()
@@ -226,7 +226,7 @@ class CuraSlicer:
             return json.load(f)
 
     async def _handle_profiles(self, web_request: WebRequest) -> Any:
-        method = web_request.get_action().name
+        method = web_request.get_action()
 
         if method == "GET":
             profiles = []
@@ -247,7 +247,7 @@ class CuraSlicer:
 
     async def _handle_profile(self, web_request: WebRequest) -> Any:
         profile_name = web_request.get_str("profile_name")
-        method = web_request.get_action().name
+        method = web_request.get_action()
 
         if method == "GET":
             data = self._load_profile(profile_name)
@@ -366,7 +366,7 @@ class CuraSlicer:
         return None
 
     async def _handle_definitions(self, web_request: WebRequest) -> Any:
-        method = web_request.get_action().name
+        method = web_request.get_action()
 
         if method == "GET":
             return {"definitions": self._list_definitions()}
@@ -394,7 +394,7 @@ class CuraSlicer:
 
     async def _handle_definition(self, web_request: WebRequest) -> Any:
         def_name = web_request.get_str("def_name")
-        method = web_request.get_action().name
+        method = web_request.get_action()
 
         if method == "GET":
             path = self._resolve_definition_path(def_name)
@@ -578,7 +578,7 @@ class CuraSlicer:
 
     async def _handle_job(self, web_request: WebRequest) -> Any:
         job_id = web_request.get_str("job_id")
-        method = web_request.get_action().name
+        method = web_request.get_action()
 
         if job_id not in self._jobs:
             raise self.server.error(f"Job '{job_id}' not found", 404)
