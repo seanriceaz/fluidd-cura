@@ -491,8 +491,9 @@
       <div class="card">
         <div class="card-title">Printer Definitions</div>
         <div class="text-dim" style="margin-bottom:10px;">
-          Definitions (.def.json) tell CuraEngine how your printer is configured.
-          System-installed definitions (from cura-engine package) are listed automatically.
+          Definitions (.def.json) tell CuraEngine your printer's dimensions and capabilities.
+          The <code>cura-engine</code> apt package does not include definitions — run
+          <code>install.sh</code> to download them, or upload individual files below.
         </div>
         <div v-if="definitions.length">
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">

@@ -333,33 +333,38 @@ class CuraSlicer:
     # Printer definitions
     # -------------------------------------------------------------------------
 
+    # Common system locations where Cura/CuraEngine installs definitions
+    _SYSTEM_DEF_DIRS: List[Path] = [
+        Path("/usr/share/cura/resources/definitions"),
+        Path("/usr/share/cura-engine/resources/definitions"),
+        Path("/usr/share/curaengine/resources/definitions"),
+        Path("/usr/lib/cura/resources/definitions"),
+        Path("/usr/lib/cura-engine/resources/definitions"),
+        Path("/usr/local/share/cura/resources/definitions"),
+    ]
+
+    @staticmethod
+    def _def_stem(p: Path) -> str:
+        """Strip .def.json suffix to get the definition name."""
+        name = p.name
+        return name[:-len(".def.json")] if name.endswith(".def.json") else p.stem
+
     def _list_definitions(self) -> List[str]:
-        names = [p.stem for p in sorted(self.definitions_dir.glob("*.def.json"))]
-        # Also look for system-installed definitions
-        system_dirs = [
-            Path("/usr/share/cura/resources/definitions"),
-            Path("/usr/share/curaengine/resources/definitions"),
-        ]
-        for sdir in system_dirs:
+        names = [self._def_stem(p) for p in sorted(self.definitions_dir.glob("*.def.json"))]
+        for sdir in self._SYSTEM_DEF_DIRS:
             if sdir.exists():
                 for p in sorted(sdir.glob("*.def.json")):
-                    stem = p.stem.replace(".def", "")
+                    stem = self._def_stem(p)
                     if stem not in names:
                         names.append(stem)
         return names
 
     def _resolve_definition_path(self, def_name: str) -> Optional[Path]:
         """Return the path to a printer definition JSON, checking local then system."""
-        # Local definitions take precedence
         local = self.definitions_dir / f"{def_name}.def.json"
         if local.exists():
             return local
-        # System locations
-        system_dirs = [
-            Path("/usr/share/cura/resources/definitions"),
-            Path("/usr/share/curaengine/resources/definitions"),
-        ]
-        for sdir in system_dirs:
+        for sdir in self._SYSTEM_DEF_DIRS:
             candidate = sdir / f"{def_name}.def.json"
             if candidate.exists():
                 return candidate

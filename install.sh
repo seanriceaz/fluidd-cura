@@ -319,6 +319,70 @@ else
 fi
 
 # =============================================================================
+# 5c. Download printer definitions
+#
+# The cura-engine apt package ships only the binary — definitions are not
+# included. Download the essential base files + common printer definitions
+# from the Ultimaker/Cura repository so the slicer has something to work with.
+# =============================================================================
+heading "Downloading printer definitions"
+
+DEFS_DEST=""
+[ -n "$MOONRAKER_DATA" ] && DEFS_DEST="$MOONRAKER_DATA/cura_definitions"
+
+if [ -z "$DEFS_DEST" ]; then
+  warn "Could not determine printer_data path – skipping definitions download."
+  info "Download manually: see https://github.com/Ultimaker/Cura/tree/4.13.1/resources/definitions"
+else
+  mkdir -p "$DEFS_DEST"
+
+  # Use a pinned Cura 4.x tag to match the cura-engine version in Debian bookworm
+  CURA_RAW="https://raw.githubusercontent.com/Ultimaker/Cura/4.13.1/resources/definitions"
+
+  # Base definitions (required for inheritance chain to work)
+  # Printer-specific definitions
+  DEF_FILES=(
+    fdmprinter.def.json
+    fdmextruder.def.json
+    creality_base.def.json
+    creality_ender3.def.json
+    creality_ender3pro.def.json
+    creality_ender5.def.json
+    voron2.def.json
+    prusa_mk3.def.json
+    prusa_mini.def.json
+    artillery_base.def.json
+    artillery_sidewinder_x1.def.json
+  )
+
+  dl_ok=0
+  dl_fail=0
+  for def_file in "${DEF_FILES[@]}"; do
+    dest="$DEFS_DEST/$def_file"
+    if [ -f "$dest" ]; then
+      info "Already present: $def_file"
+      dl_ok=$((dl_ok + 1))
+      continue
+    fi
+    if wget -q -O "$dest" "$CURA_RAW/$def_file" 2>/dev/null; then
+      ok "Downloaded: $def_file"
+      dl_ok=$((dl_ok + 1))
+    else
+      rm -f "$dest"
+      warn "Not available: $def_file (skipped)"
+      dl_fail=$((dl_fail + 1))
+    fi
+  done
+
+  if [ "$dl_ok" -gt 0 ]; then
+    ok "$dl_ok definition file(s) ready in $DEFS_DEST"
+  fi
+  if [ "$dl_fail" -gt 0 ]; then
+    warn "$dl_fail file(s) could not be downloaded – add definitions manually via the UI."
+  fi
+fi
+
+# =============================================================================
 # 6. Nginx configuration
 # =============================================================================
 if [ "$DO_NGINX" = true ]; then
