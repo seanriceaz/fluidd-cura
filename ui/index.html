@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cura Slicer</title>
   <script src="vue.min.js"></script>
+  <script src="three.min.js"></script>
+  <script src="three.STLLoader.js"></script>
+  <script src="three.OrbitControls.js"></script>
   <style>
     /* ── Reset & base ── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -238,6 +241,35 @@
     .flex { display: flex; align-items: center; }
     .flex-between { justify-content: space-between; }
     .gap-8 { gap: 8px; }
+
+    /* ── 3D Preview Panel ── */
+    .preview-wrap {
+      position: relative;
+      width: 100%;
+      height: 320px;
+      background: #111;
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .preview-wrap canvas { display: block; width: 100%; height: 100%; }
+    .preview-overlay {
+      position: absolute;
+      bottom: 6px;
+      right: 8px;
+      font-size: 11px;
+      color: rgba(255,255,255,.3);
+      pointer-events: none;
+      user-select: none;
+    }
+    .axis-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .axis-label { font-size: 11px; color: var(--text-dim); min-width: 48px; font-weight: 500; }
+    .btn-xs { padding: 3px 9px; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -296,9 +328,51 @@
         </div>
       </div>
 
+      <!-- 3D Preview & Transform -->
+      <div class="card" v-if="uploadedStlPath">
+        <div class="card-title">2 · Preview &amp; Transform</div>
+
+        <div class="preview-wrap" ref="previewWrap">
+          <canvas ref="previewCanvas"></canvas>
+          <div class="preview-overlay">Drag to orbit · Scroll to zoom</div>
+        </div>
+
+        <div v-if="!isStl" class="alert alert-info mt-8">
+          3D preview and transforms are only available for .stl files. This file will be sliced as-is.
+        </div>
+
+        <template v-if="isStl">
+          <div style="margin-top:12px;">
+            <div class="axis-group">
+              <span class="axis-label">Rotate X</span>
+              <button class="btn btn-ghost btn-xs" @click="rotate('x', -90)">−90°</button>
+              <button class="btn btn-ghost btn-xs" @click="rotate('x',  90)">+90°</button>
+              <span class="axis-label" style="margin-left:8px;">Rotate Y</span>
+              <button class="btn btn-ghost btn-xs" @click="rotate('y', -90)">−90°</button>
+              <button class="btn btn-ghost btn-xs" @click="rotate('y',  90)">+90°</button>
+              <span class="axis-label" style="margin-left:8px;">Rotate Z</span>
+              <button class="btn btn-ghost btn-xs" @click="rotate('z', -90)">−90°</button>
+              <button class="btn btn-ghost btn-xs" @click="rotate('z',  90)">+90°</button>
+            </div>
+            <div class="axis-group">
+              <span class="axis-label">Scale</span>
+              <input type="number" v-model.number="modelScale"
+                     min="0.01" max="100" step="0.1"
+                     style="width:80px;"
+                     @change="onScaleChange" />
+              <span class="text-dim">× uniform</span>
+              <button class="btn btn-ghost btn-xs" style="margin-left:8px;" @click="resetTransform">↺ Reset</button>
+            </div>
+            <div class="text-dim" style="margin-top:4px; font-size:11px;">
+              Model is auto-centered on the bed and dropped to Z=0 after each transform.
+            </div>
+          </div>
+        </template>
+      </div>
+
       <!-- Profile selection -->
       <div class="card">
-        <div class="card-title">2 · Select Profile</div>
+        <div class="card-title">{{ 2 + stepOffset }} · Select Profile</div>
         <div class="form-row">
           <label>Cura Profile</label>
           <select v-model="selectedProfile">
@@ -336,7 +410,7 @@
 
       <!-- Slice options -->
       <div class="card">
-        <div class="card-title">3 · Slice</div>
+        <div class="card-title">{{ 3 + stepOffset }} · Slice</div>
         <div class="form-row">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
             <input type="checkbox" v-model="printAfter" />
@@ -609,7 +683,7 @@
 </div><!-- /app -->
 
 <script>
-const { createApp, ref, reactive, computed, onMounted, onUnmounted } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue;
 
 // Auto-detect Moonraker origin: if this page is served from the same host as moonraker,
 // use the current origin; otherwise fall back to the Raspberry Pi's default port.
@@ -799,6 +873,205 @@ createApp({
     const isSlicing = computed(() =>
       activeJob.value && ['pending','slicing'].includes(activeJob.value.status));
 
+    // ── 3D Preview ──
+    const previewWrap   = ref(null);
+    const previewCanvas = ref(null);
+    const modelScale    = ref(1.0);
+    const buildVolume   = reactive({ w: 220, d: 220, h: 250 });
+    const isStl = computed(() =>
+      (uploadedStl.value?.name || '').toLowerCase().endsWith('.stl'));
+    const stepOffset = computed(() => uploadedStlPath.value ? 1 : 0);
+
+    // Non-reactive Three.js state object (avoid Vue observer overhead on GL objects)
+    let three = null;
+
+    function destroyPreview() {
+      if (!three) return;
+      cancelAnimationFrame(three.rafId);
+      if (three.controls) three.controls.dispose();
+      if (three.renderer) three.renderer.dispose();
+      if (three.mesh) { three.mesh.geometry.dispose(); three.mesh.material.dispose(); }
+      if (three.originalGeometry) three.originalGeometry.dispose();
+      if (three.bedBox) { three.bedBox.geometry.dispose(); three.bedBox.material.dispose(); }
+      three = null;
+    }
+
+    function createBedBox(w, d, h) {
+      // In display (Y-up): width=w(X), height=h(Y), depth=d(Z)
+      // Box centered at origin; shift up so bottom face sits at Y=0
+      const geo   = new THREE.BoxGeometry(w, h, d);
+      const edges = new THREE.EdgesGeometry(geo);
+      geo.dispose();
+      const mat = new THREE.LineBasicMaterial({ color: 0x3a3a3a });
+      const box = new THREE.LineSegments(edges, mat);
+      box.position.set(0, h / 2, 0);
+      return box;
+    }
+
+    function updateBedBox() {
+      if (!three) return;
+      if (three.bedBox) {
+        three.scene.remove(three.bedBox);
+        three.bedBox.geometry.dispose();
+        three.bedBox.material.dispose();
+      }
+      three.bedBox = createBedBox(buildVolume.w, buildVolume.d, buildVolume.h);
+      three.scene.add(three.bedBox);
+      positionCamera();
+    }
+
+    function positionCamera() {
+      if (!three) return;
+      const { w, d, h } = buildVolume;
+      const target = new THREE.Vector3(0, h / 2, 0);
+      three.controls.target.copy(target);
+      three.camera.position.set(w * 0.5, h * 1.1, d * 1.4);
+      three.camera.lookAt(target);
+      three.controls.update();
+    }
+
+    function applyTransformToMesh() {
+      if (!three || !three.originalGeometry || !three.mesh) return;
+
+      // Compose: scale then accumulated rotation (in STL/Z-up coordinate space)
+      const M = new THREE.Matrix4();
+      const s = modelScale.value;
+      M.multiplyMatrices(
+        new THREE.Matrix4().makeScale(s, s, s),
+        three.accumMatrix
+      );
+
+      // Clone and transform original geometry (vertices stay in STL/Z-up space)
+      const geo = three.originalGeometry.clone();
+      geo.applyMatrix4(M);
+      geo.computeBoundingBox();
+      const bb = geo.boundingBox;
+
+      // Auto-place: center X/Y, drop Z so minZ=0 (in STL/CuraEngine Z-up space)
+      geo.translate(
+        -((bb.min.x + bb.max.x) / 2),
+        -((bb.min.y + bb.max.y) / 2),
+        -bb.min.z
+      );
+
+      three.mesh.geometry.dispose();
+      three.mesh.geometry = geo;
+    }
+
+    function rotate(axis, degrees) {
+      if (!three) return;
+      const rad = THREE.MathUtils.degToRad(degrees);
+      const delta = new THREE.Matrix4();
+      if (axis === 'x') delta.makeRotationX(rad);
+      else if (axis === 'y') delta.makeRotationY(rad);
+      else delta.makeRotationZ(rad);
+      // Pre-multiply: new rotation applied before existing (world-space feel)
+      three.accumMatrix.premultiply(delta);
+      applyTransformToMesh();
+    }
+
+    function resetTransform() {
+      if (!three) return;
+      three.accumMatrix.identity();
+      modelScale.value = 1.0;
+      applyTransformToMesh();
+    }
+
+    function onScaleChange() {
+      if (modelScale.value <= 0) modelScale.value = 0.01;
+      applyTransformToMesh();
+    }
+
+    function initPreview(stlUrl) {
+      destroyPreview();
+      // nextTick-style delay to ensure the canvas refs are mounted in the DOM
+      setTimeout(() => {
+        const canvas = previewCanvas.value;
+        const wrap   = previewWrap.value;
+        if (!canvas || !wrap || typeof THREE === 'undefined' ||
+            typeof THREE.STLLoader === 'undefined') return;
+
+        const W = wrap.clientWidth  || 400;
+        const H = wrap.clientHeight || 320;
+
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(W, H);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+
+        const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 10000);
+
+        // Lights
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+        dir.position.set(1, 2, 1);
+        scene.add(dir);
+
+        // Group corrects Z-up STL → Three.js Y-up for display
+        // (model geometry remains in Z-up; only rendering is corrected)
+        const group = new THREE.Group();
+        group.rotation.x = -Math.PI / 2;
+        scene.add(group);
+
+        // OrbitControls on the canvas element (works inside iframes)
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.1;
+
+        // Build volume wireframe
+        const bedBox = createBedBox(buildVolume.w, buildVolume.d, buildVolume.h);
+        scene.add(bedBox);
+
+        three = {
+          renderer, scene, camera, group, controls,
+          mesh: null, originalGeometry: null,
+          bedBox, accumMatrix: new THREE.Matrix4(), rafId: null,
+        };
+
+        positionCamera();
+
+        // Load the STL from Moonraker's file API
+        const loader = new THREE.STLLoader();
+        loader.load(stlUrl, (geometry) => {
+          if (!three) return; // destroyed while loading
+          three.originalGeometry = geometry;
+
+          const material = new THREE.MeshPhongMaterial({
+            color: 0x2196f3, specular: 0x444444, shininess: 30,
+          });
+          three.mesh = new THREE.Mesh(geometry.clone(), material);
+          three.group.add(three.mesh);
+
+          applyTransformToMesh();
+
+          function animate() {
+            if (!three) return;
+            three.rafId = requestAnimationFrame(animate);
+            three.controls.update();
+            three.renderer.render(three.scene, three.camera);
+          }
+          animate();
+        });
+      }, 50);
+    }
+
+    // Watch profile changes to update the build volume box
+    watch(selectedProfile, async (name) => {
+      if (!name) return;
+      try {
+        const prof = await api('GET', `/server/cura_slicer/profiles/${encodeURIComponent(name)}`);
+        const bv = prof.build_volume;
+        if (bv) {
+          buildVolume.w = bv.width  || 220;
+          buildVolume.d = bv.depth  || 220;
+          buildVolume.h = bv.height || 250;
+          if (three) updateBedBox();
+        }
+      } catch(e) { /* keep default build volume */ }
+    });
+
     function addOverride() { overrides.value.push({ key: '', value: '' }); }
     function removeOverride(i) { overrides.value.splice(i, 1); }
 
@@ -848,9 +1121,15 @@ createApp({
       uploadedStl.value = file;
       uploadedStlPath.value = '';
       uploadError.value = '';
+      destroyPreview();
       try {
         const path = await uploadStl(file);
         uploadedStlPath.value = path;
+        if (file.name.toLowerCase().endsWith('.stl')) {
+          modelScale.value = 1.0;
+          const url = `${MOONRAKER}/server/files/gcodes/${encodeURIComponent(path)}`;
+          initPreview(url);
+        }
       } catch(e) {
         uploadError.value = e.message;
         uploadedStl.value = null;
@@ -864,13 +1143,29 @@ createApp({
       for (const { key, value } of overrides.value) {
         if (key.trim()) settings[key.trim()] = value;
       }
+      const body = {
+        filename: uploadedStlPath.value,
+        profile: selectedProfile.value,
+        settings,
+        print_after: printAfter.value,
+      };
+      // Attach transform for STL files with non-identity state
+      if (isStl.value && three) {
+        const isIdentity = three.accumMatrix.equals(new THREE.Matrix4()) && modelScale.value === 1.0;
+        if (!isIdentity) {
+          const e = three.accumMatrix.elements; // column-major
+          body.transform = {
+            rotation: [
+              [e[0], e[4], e[8]],
+              [e[1], e[5], e[9]],
+              [e[2], e[6], e[10]],
+            ],
+            scale: modelScale.value,
+          };
+        }
+      }
       try {
-        const r = await api('POST', '/server/cura_slicer/slice', {
-          filename: uploadedStlPath.value,
-          profile: selectedProfile.value,
-          settings,
-          print_after: printAfter.value,
-        });
+        const r = await api('POST', '/server/cura_slicer/slice', body);
         activeJob.value = { id: r.job_id, status: 'pending', progress: 0, progress_stage: '' };
         pollJob(r.job_id);
       } catch(e) {
@@ -959,7 +1254,7 @@ createApp({
       loadJobs();
       loadSettings();
     });
-    onUnmounted(() => clearTimeout(pollTimer));
+    onUnmounted(() => { clearTimeout(pollTimer); destroyPreview(); });
 
     return {
       tab,
@@ -975,6 +1270,9 @@ createApp({
       jobs, loadJobs,
       settingsForm, settingsStatus, settingsSaving, settingsSaveMsg, settingsSaveOk,
       loadSettings, saveSettings,
+      // 3D preview
+      previewWrap, previewCanvas, modelScale, isStl, stepOffset,
+      rotate, resetTransform, onScaleChange,
     };
   }
 }).mount('#app');
