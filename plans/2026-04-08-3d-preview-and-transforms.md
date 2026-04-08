@@ -68,7 +68,6 @@ Profile card title becomes `{{ 2 + stepOffset }} · Select Profile` (where `step
 **Reactive:**
 ```javascript
 const modelScale = ref(1.0);
-const rotMatrix = ref([1,0,0, 0,1,0, 0,0,1]);  // row-major 3×3, Z-up CuraEngine space
 const previewWrap = ref(null);   // template ref
 const previewCanvas = ref(null); // template ref
 const isStl = computed(() =>
@@ -77,11 +76,13 @@ const isStl = computed(() =>
 const stepOffset = computed(() => uploadedStlPath.value ? 1 : 0);
 ```
 
-**Non-reactive (stored as closure variable):**
+**Non-reactive (stored as closure variable — outside Vue reactivity for performance):**
 ```javascript
 let three = null; // { renderer, camera, scene, controls, mesh, originalGeometry,
-                  //   buildVolume: {w,d,h}, rafId }
+                  //   accumMatrix: THREE.Matrix4, buildVolume: {w,d,h}, rafId }
 ```
+
+**Why `THREE.Matrix4` instead of a flat rotation array**: accumulating ±90° rotations via a matrix avoids gimbal lock. Multiple clicks on different axes compose correctly. The 3×3 rotation is extracted from the Matrix4 for the JSON payload to Python.
 
 ### 2.5 Three.js functions
 
@@ -110,16 +111,25 @@ let three = null; // { renderer, camera, scene, controls, mesh, originalGeometry
 5. Assign new geometry to mesh
 
 **`rotate(axis, deg)`** — 90° step rotation:
-1. Build a 3×3 rotation matrix `R` for `axis` ∈ `{x,y,z}` in CuraEngine Z-up space
-2. Multiply `rotMatrix.value = R × rotMatrix.value` (9-float row-major multiply, pure JS)
-3. Call `applyTransformToMesh()`
+```javascript
+function rotate(axis, degrees) {
+  const rad = degrees * Math.PI / 180;
+  const delta = new THREE.Matrix4();
+  if (axis === 'x') delta.makeRotationX(rad);
+  else if (axis === 'y') delta.makeRotationY(rad);
+  else delta.makeRotationZ(rad);
+  // Pre-multiply: delta * current → applies rotation in world frame (intuitive for axis buttons)
+  three.accumMatrix.premultiply(delta);
+  applyTransformToMesh();
+}
+```
 
-**`resetTransform()`**: reset `rotMatrix` to identity, `modelScale` to 1.0, call `applyTransformToMesh()`.
+**`resetTransform()`**: reset `three.accumMatrix` to identity, `modelScale` to 1.0, call `applyTransformToMesh()`.
 
 **`destroyPreview()`**: cancel RAF, dispose renderer/geometry/material, set `three = null`.
 
 **`loadBuildVolume(profileName)`** — triggered by `watch(selectedProfile, ...)`:
-1. `GET /server/cura_slicer/profiles/{name}` — reads `result.build_volume` from the response (see Part 3.3)
+1. `GET /server/cura_slicer/profiles/{name}/build_volume` — returns `{width, depth, height}` in mm
 2. Update `three.buildVolume`, rebuild wireframe box, reposition camera
 
 **Trigger**: in `handleStlFile()`, after `uploadedStlPath.value = path`:
@@ -141,6 +151,8 @@ Auto-placement translation in Three.js display: after bounding box, shift so `mi
 
 ### 2.7 Updated `startSlice()`
 
+Extract the 3×3 rotation from the Matrix4 (column-major `elements` array) and only attach transform if non-identity:
+
 ```javascript
 const body = {
   filename: uploadedStlPath.value,
@@ -148,11 +160,19 @@ const body = {
   settings,
   print_after: printAfter.value,
 };
-if (isStl.value) {
-  body.transform = {
-    rotation: rotMatrix.value,   // 9 floats, row-major 3×3, Z-up
-    scale: modelScale.value,     // uniform float
-  };
+if (isStl.value && three) {
+  const isIdentity = three.accumMatrix.equals(new THREE.Matrix4()) && modelScale.value === 1.0;
+  if (!isIdentity) {
+    const e = three.accumMatrix.elements; // column-major
+    body.transform = {
+      rotation: [           // row-major 3×3
+        [e[0], e[4], e[8]],
+        [e[1], e[5], e[9]],
+        [e[2], e[6], e[10]],
+      ],
+      scale: modelScale.value,
+    };
+  }
 }
 ```
 
@@ -169,8 +189,8 @@ Pure Python, no external deps. Uses only `struct`, `math`, `os`.
 - Detect ASCII STL heuristic: if header starts with b'solid' AND expected binary size doesn't
   match actual file size → raise ValueError("ASCII STL")
 - First pass: transform all vertices (scale then rotate via 3×3 matrix multiply) + track bbox
-- Compute translation: tx = bv_w/2 - (minX+maxX)/2, ty = bv_d/2 - (minY+maxY)/2, tz = -minZ
-  (If no build_volume, just center around 0 and drop to Z=0)
+- Compute translation: tx = -(minX+maxX)/2, ty = -(minY+maxY)/2, tz = -minZ
+  (Center X/Y around 0, drop Z to 0 — CuraEngine auto-centers on the bed when slicing)
 - Rotate normals (rotation only, no scale/translate)
 - Write new binary STL to dst_path
 ```
@@ -238,21 +258,35 @@ def _get_build_volume(self, def_name):
         return None
 ```
 
-### 3.5 Profile GET response — add `build_volume`
+### 3.5 New endpoint `GET /server/cura_slicer/profiles/{name}/build_volume`
 
-In `_handle_profile` (GET branch), after loading profile data:
+A separate lightweight endpoint rather than embedding in the profile GET response (avoids bloating every profile fetch, and `fdmprinter.def.json` can be 5 MB — we only need 3 values).
 
 ```python
-bv = self._get_build_volume(data.get("printer_definition", ""))
-data["build_volume"] = {
-    "width":  bv[0] if bv else 220.0,
-    "depth":  bv[1] if bv else 220.0,
-    "height": bv[2] if bv else 250.0,
-}
-return data
+async def _handle_build_volume(self, web_request):
+    profile_name = web_request.get_str("profile_name")
+    profile = self._load_profile(profile_name)
+    if profile is None:
+        raise self.server.error(f"Profile '{profile_name}' not found", 404)
+    w, d, h = 220, 220, 250  # fallback defaults
+    def_name = profile.get("printer_definition", "")
+    if def_name:
+        path = self._resolve_definition_path(def_name)
+        if path:
+            try:
+                with open(path) as f:
+                    def_json = json.load(f)
+                for section in ("overrides", "settings"):
+                    sec = def_json.get(section, {})
+                    if "machine_width"  in sec: w = int(sec["machine_width"].get("default_value", w))
+                    if "machine_depth"  in sec: d = int(sec["machine_depth"].get("default_value", d))
+                    if "machine_height" in sec: h = int(sec["machine_height"].get("default_value", h))
+            except Exception as exc:
+                logger.warning(f"Could not read build volume: {exc}")
+    return {"width": w, "depth": d, "height": h}
 ```
 
-The frontend `loadBuildVolume()` reads `result.build_volume` from this response.
+Register in `__init__`: `self.server.register_endpoint("/server/cura_slicer/profiles/{profile_name}/build_volume", ["GET"], self._handle_build_volume)`
 
 ---
 
