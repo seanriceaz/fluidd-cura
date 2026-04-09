@@ -259,6 +259,26 @@ STUB
   fi
 fi
 
+# Download Three.js r128 (last version with non-ESM global builds) for 3D preview
+THREE_BASE="https://cdn.jsdelivr.net/npm/three@0.128.0"
+for item in \
+    "three.min.js|${THREE_BASE}/build/three.min.js" \
+    "three.STLLoader.js|${THREE_BASE}/examples/js/loaders/STLLoader.js" \
+    "three.OrbitControls.js|${THREE_BASE}/examples/js/controls/OrbitControls.js"; do
+  fname="${item%%|*}"; url="${item##*|}"
+  dest="$UI_DEST/$fname"
+  if [ -f "$dest" ]; then
+    ok "$fname already downloaded."
+  else
+    info "Downloading $fname …"
+    if sudo wget -q -O "$dest" "$url"; then
+      ok "$fname downloaded."
+    else
+      warn "Download failed for $fname – 3D preview will not work without this file."
+    fi
+  fi
+done
+
 sudo chown -R www-data:www-data "$UI_DEST" 2>/dev/null || true
 ok "UI deployed to $UI_DEST"
 

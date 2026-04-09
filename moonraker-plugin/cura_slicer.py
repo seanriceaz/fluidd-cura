@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import shutil
+import struct
 import subprocess
 import uuid
 import zipfile
@@ -35,6 +36,101 @@ MAX_JOB_HISTORY = 20
 
 # CuraEngine progress pattern from stderr with -p flag
 PROGRESS_RE = re.compile(r"Progress:(\w+):([0-9.]+)")
+
+
+def _transform_stl_binary(
+    src_path: str,
+    dst_path: str,
+    rotation: list,
+    scale: float,
+) -> None:
+    """
+    Read a binary STL, apply scale + rotation + auto-placement, write to dst_path.
+
+    rotation: 3×3 row-major list-of-lists [[r00,r01,r02], [r10,r11,r12], [r20,r21,r22]]
+    scale:    uniform scale factor
+
+    Auto-placement: center X/Y around 0, drop Z to 0.
+    Raises ValueError for ASCII STLs or malformed files (caller uses original instead).
+    """
+    file_size = os.path.getsize(src_path)
+    if file_size < 84:
+        raise ValueError("File too small to be a valid binary STL")
+
+    with open(src_path, 'rb') as f:
+        header = f.read(80)
+        tri_count = struct.unpack('<I', f.read(4))[0]
+
+    expected_size = 80 + 4 + tri_count * 50
+    if abs(expected_size - file_size) > 4:
+        raise ValueError(
+            f"Does not appear to be a binary STL "
+            f"(expected {expected_size} bytes, got {file_size})"
+        )
+
+    R = rotation  # R[row][col]
+    s = scale
+
+    def transform_vertex(x, y, z):
+        xs, ys, zs = x * s, y * s, z * s
+        return (
+            R[0][0] * xs + R[0][1] * ys + R[0][2] * zs,
+            R[1][0] * xs + R[1][1] * ys + R[1][2] * zs,
+            R[2][0] * xs + R[2][1] * ys + R[2][2] * zs,
+        )
+
+    def transform_normal(x, y, z):
+        # Normals use rotation only (inverse-transpose of R = R for orthogonal matrices)
+        return (
+            R[0][0] * x + R[0][1] * y + R[0][2] * z,
+            R[1][0] * x + R[1][1] * y + R[1][2] * z,
+            R[2][0] * x + R[2][1] * y + R[2][2] * z,
+        )
+
+    TRI_STRUCT = struct.Struct('<3f 3f 3f 3f H')
+    tris = []
+    min_x = min_y = min_z = float('inf')
+    max_x = max_y = float('-inf')
+
+    with open(src_path, 'rb') as f:
+        f.seek(84)  # skip 80-byte header + 4-byte tri count
+        for _ in range(tri_count):
+            vals = TRI_STRUCT.unpack(f.read(50))
+            n  = transform_normal(vals[0], vals[1], vals[2])
+            v1 = transform_vertex(vals[3], vals[4], vals[5])
+            v2 = transform_vertex(vals[6], vals[7], vals[8])
+            v3 = transform_vertex(vals[9], vals[10], vals[11])
+            attr = vals[12]
+            tris.append((n, v1, v2, v3, attr))
+            for vx, vy, vz in (v1, v2, v3):
+                if vx < min_x: min_x = vx
+                if vx > max_x: max_x = vx
+                if vy < min_y: min_y = vy
+                if vy > max_y: max_y = vy
+                if vz < min_z: min_z = vz
+
+    # Auto-placement: center X/Y around 0, drop Z so min is 0
+    tx = -((min_x + max_x) / 2.0)
+    ty = -((min_y + max_y) / 2.0)
+    tz = -min_z
+
+    # Write output binary STL
+    out = bytearray(84 + tri_count * 50)
+    out[:80] = header
+    struct.pack_into('<I', out, 80, tri_count)
+
+    offset = 84
+    for (n, v1, v2, v3, attr) in tris:
+        TRI_STRUCT.pack_into(out, offset,
+            n[0], n[1], n[2],
+            v1[0] + tx, v1[1] + ty, v1[2] + tz,
+            v2[0] + tx, v2[1] + ty, v2[2] + tz,
+            v3[0] + tx, v3[1] + ty, v3[2] + tz,
+            attr)
+        offset += 50
+
+    with open(dst_path, 'wb') as f:
+        f.write(out)
 
 
 class CuraSlicer:
@@ -253,6 +349,13 @@ class CuraSlicer:
             data = self._load_profile(profile_name)
             if data is None:
                 raise self.server.error(f"Profile '{profile_name}' not found", 404)
+            # Augment with build volume from the printer definition
+            bv = self._get_build_volume(data.get("printer_definition", ""))
+            data["build_volume"] = {
+                "width":  bv[0] if bv else 220.0,
+                "depth":  bv[1] if bv else 220.0,
+                "height": bv[2] if bv else 250.0,
+            }
             return data
 
         if method == "DELETE":
@@ -365,6 +468,36 @@ class CuraSlicer:
                 return candidate
         return None
 
+    def _get_build_volume(self, def_name: str) -> Optional[tuple]:
+        """Return (width_mm, depth_mm, height_mm) from a printer definition, or None."""
+        if not def_name:
+            return None
+        path = self._resolve_definition_path(def_name)
+        if not path:
+            return None
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            w = d = h = None
+            for section in ("overrides", "settings"):
+                sec = data.get(section, {})
+                if "machine_width"  in sec and w is None:
+                    w = sec["machine_width"].get("default_value")
+                if "machine_depth"  in sec and d is None:
+                    d = sec["machine_depth"].get("default_value")
+                if "machine_height" in sec and h is None:
+                    h = sec["machine_height"].get("default_value")
+            if w is None and d is None and h is None:
+                return None
+            return (
+                float(w) if w is not None else 220.0,
+                float(d) if d is not None else 220.0,
+                float(h) if h is not None else 250.0,
+            )
+        except Exception as exc:
+            logger.warning(f"Could not read build volume from '{def_name}': {exc}")
+            return None
+
     async def _handle_definitions(self, web_request: WebRequest) -> Any:
         method = web_request.get_action().name
 
@@ -423,6 +556,7 @@ class CuraSlicer:
         profile_name: str = body.get("profile", "").strip()
         extra_settings: Dict[str, str] = body.get("settings", {})
         print_after: bool = body.get("print_after", False)
+        transform: Optional[Dict[str, Any]] = body.get("transform", None)
 
         if not stl_filename:
             raise self.server.error("'filename' (STL path in gcodes root) is required", 400)
@@ -468,7 +602,7 @@ class CuraSlicer:
         merged_settings = {**profile.get("settings", {}), **extra_settings}
         def_name = profile.get("printer_definition", "")
         asyncio.ensure_future(
-            self._run_slice(job, stl_path, output_path, def_name, merged_settings)
+            self._run_slice(job, stl_path, output_path, def_name, merged_settings, transform)
         )
 
         return {"job_id": job_id, "status": "pending"}
@@ -480,9 +614,41 @@ class CuraSlicer:
         output_path: Path,
         def_name: str,
         settings: Dict[str, str],
+        transform: Optional[Dict[str, Any]] = None,
     ) -> None:
         job["status"] = "slicing"
         job["progress"] = 0.0
+
+        # Apply mesh transform (rotation + scale + auto-placement) for STL files
+        input_path = stl_path
+        if transform and stl_path.suffix.lower() == '.stl':
+            rotation = transform.get("rotation")
+            scale    = float(transform.get("scale", 1.0))
+            if (isinstance(rotation, list) and len(rotation) == 3
+                    and all(isinstance(r, list) and len(r) == 3 for r in rotation)):
+                transformed_path = self.temp_dir / f"xf_{job['id']}.stl"
+                try:
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None,
+                        _transform_stl_binary,
+                        str(stl_path),
+                        str(transformed_path),
+                        rotation,
+                        scale,
+                    )
+                    input_path = transformed_path
+                    logger.info(
+                        f"[job {job['id']}] Applied transform: scale={scale:.3f}")
+                except ValueError as exc:
+                    logger.warning(
+                        f"[job {job['id']}] STL transform skipped: {exc}")
+                except Exception as exc:
+                    logger.error(
+                        f"[job {job['id']}] STL transform failed: {exc}; using original")
+            else:
+                logger.warning(
+                    f"[job {job['id']}] Invalid rotation matrix in transform, ignoring")
 
         cmd = [self.cura_engine, "slice", "-v", "-p"]
 
@@ -499,7 +665,7 @@ class CuraSlicer:
         for key, value in settings.items():
             cmd += ["-s", f"{key}={value}"]
 
-        cmd += ["-o", str(output_path), "-l", str(stl_path)]
+        cmd += ["-o", str(output_path), "-l", str(input_path)]
 
         logger.info(f"[job {job['id']}] Running: {' '.join(cmd)}")
         try:
@@ -537,6 +703,13 @@ class CuraSlicer:
             job["progress"] = 1.0
             logger.info(f"[job {job['id']}] Slicing complete: {output_path}")
 
+            # Clean up temp transform file if one was created
+            if input_path != stl_path:
+                try:
+                    input_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
             # Notify moonraker file manager of the new gcode
             try:
                 fm = self.server.lookup_component("file_manager")
@@ -552,6 +725,12 @@ class CuraSlicer:
             job["status"] = "error"
             job["error"] = str(exc)
             logger.exception(f"[job {job['id']}] Slicing failed: {exc}")
+            # Clean up temp transform file if one was created
+            if input_path != stl_path:
+                try:
+                    input_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     async def _start_print(self, gcode_path: str) -> None:
         """Tell Klipper (via Moonraker) to start printing the gcode file."""
