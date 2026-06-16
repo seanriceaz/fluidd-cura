@@ -23,7 +23,7 @@ import subprocess
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..confighelper import ConfigHelper
@@ -36,6 +36,27 @@ MAX_JOB_HISTORY = 20
 
 # CuraEngine progress pattern from stderr with -p flag
 PROGRESS_RE = re.compile(r"Progress:(\w+):([0-9.]+)")
+
+IDENTITY_ROTATION = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+# Settings CuraEngine has no usable built-in default for unless a full
+# printer definition (with its fdmprinter/fdmextruder parent chain) is
+# loaded. The definitions this project resolves are typically standalone
+# files without that parent chain, so CuraEngine aborts with "Trying to
+# retrieve setting with no value given" the first time it needs one of
+# these. Values here mirror fdmprinter.def.json's own defaults and are
+# overridden by whatever the resolved definition specifies, then by the
+# profile/request settings.
+ESSENTIAL_MACHINE_DEFAULTS: Dict[str, str] = {
+    "machine_width": "220",
+    "machine_depth": "220",
+    "machine_height": "250",
+    "machine_shape": "rectangular",
+    "machine_center_is_zero": "false",
+    "machine_heated_bed": "true",
+    "machine_nozzle_size": "0.4",
+    "machine_extruder_count": "1",
+}
 
 
 def _read_plugin_version() -> str:
@@ -485,35 +506,46 @@ class CuraSlicer:
                 return candidate
         return None
 
+    def _read_definition_overrides(
+        self, def_name: str, keys: Iterable[str]
+    ) -> Dict[str, Any]:
+        """Return {setting_id: default_value} for the given keys, read directly
+        from a definition's own "overrides"/"settings" sections (no "inherits"
+        resolution – CuraEngine handles that itself via -j)."""
+        result: Dict[str, Any] = {}
+        if not def_name:
+            return result
+        path = self._resolve_definition_path(def_name)
+        if not path:
+            return result
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            for section in ("overrides", "settings"):
+                sec = data.get(section, {})
+                for key in keys:
+                    if key not in result and key in sec and "default_value" in sec[key]:
+                        result[key] = sec[key]["default_value"]
+        except Exception as exc:
+            logger.warning(f"Could not read overrides from '{def_name}': {exc}")
+        return result
+
     def _get_build_volume(self, def_name: str) -> Optional[tuple]:
         """Return (width_mm, depth_mm, height_mm) from a printer definition, or None."""
         if not def_name:
             return None
-        path = self._resolve_definition_path(def_name)
-        if not path:
+        overrides = self._read_definition_overrides(
+            def_name, ("machine_width", "machine_depth", "machine_height"))
+        w = overrides.get("machine_width")
+        d = overrides.get("machine_depth")
+        h = overrides.get("machine_height")
+        if w is None and d is None and h is None:
             return None
-        try:
-            with open(path) as f:
-                data = json.load(f)
-            w = d = h = None
-            for section in ("overrides", "settings"):
-                sec = data.get(section, {})
-                if "machine_width"  in sec and w is None:
-                    w = sec["machine_width"].get("default_value")
-                if "machine_depth"  in sec and d is None:
-                    d = sec["machine_depth"].get("default_value")
-                if "machine_height" in sec and h is None:
-                    h = sec["machine_height"].get("default_value")
-            if w is None and d is None and h is None:
-                return None
-            return (
-                float(w) if w is not None else 220.0,
-                float(d) if d is not None else 220.0,
-                float(h) if h is not None else 250.0,
-            )
-        except Exception as exc:
-            logger.warning(f"Could not read build volume from '{def_name}': {exc}")
-            return None
+        return (
+            float(w) if w is not None else 220.0,
+            float(d) if d is not None else 220.0,
+            float(h) if h is not None else 250.0,
+        )
 
     async def _handle_definitions(self, web_request: WebRequest) -> Any:
         method = web_request.get_action()
@@ -636,10 +668,16 @@ class CuraSlicer:
         job["status"] = "slicing"
         job["progress"] = 0.0
 
-        # Apply mesh transform (rotation + scale + auto-placement) for STL files
+        # Apply mesh transform (rotation + scale + auto-placement) for STL files.
+        # The preview always auto-centers/drops the mesh (applyTransformToMesh()
+        # in ui/index.html runs unconditionally), so run the same step here even
+        # when the client omitted "transform" (i.e. identity rotation/scale) –
+        # otherwise an off-center upload would slice from its raw, uncentered
+        # coordinates while the preview showed it centered on the bed.
         input_path = stl_path
-        if transform and stl_path.suffix.lower() == '.stl':
-            rotation = transform.get("rotation")
+        if stl_path.suffix.lower() == '.stl':
+            transform = transform or {}
+            rotation = transform.get("rotation", IDENTITY_ROTATION)
             scale    = float(transform.get("scale", 1.0))
             if (isinstance(rotation, list) and len(rotation) == 3
                     and all(isinstance(r, list) and len(r) == 3 for r in rotation)):
@@ -670,16 +708,26 @@ class CuraSlicer:
         cmd = [self.cura_engine, "slice", "-v", "-p"]
 
         # Printer definition
+        machine_settings = dict(ESSENTIAL_MACHINE_DEFAULTS)
         if def_name:
             def_path = self._resolve_definition_path(def_name)
             if def_path:
                 cmd += ["-j", str(def_path)]
+                machine_settings.update(
+                    self._read_definition_overrides(
+                        def_name, ESSENTIAL_MACHINE_DEFAULTS.keys()))
             else:
                 logger.warning(
                     f"Printer definition '{def_name}' not found; slicing without it")
 
-        # Settings
-        for key, value in settings.items():
+        # Settings. Definitions referenced here ship without CuraEngine's
+        # fdmprinter/fdmextruder parent chain, so basic machine settings
+        # (bed size, origin convention, ...) have no usable built-in default
+        # and CuraEngine aborts with "no value given" unless supplied
+        # explicitly. machine_settings provides conservative fallbacks,
+        # overridden by whatever the resolved definition itself specifies,
+        # then by the profile/request settings.
+        for key, value in {**machine_settings, **settings}.items():
             cmd += ["-s", f"{key}={value}"]
 
         # mesh_rotation_matrix has no default in fdmprinter.def.json, so CuraEngine
