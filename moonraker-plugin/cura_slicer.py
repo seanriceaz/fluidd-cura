@@ -39,14 +39,21 @@ PROGRESS_RE = re.compile(r"Progress:(\w+):([0-9.]+)")
 
 IDENTITY_ROTATION = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
-# Settings CuraEngine has no usable built-in default for unless a full
-# printer definition (with its fdmprinter/fdmextruder parent chain) is
-# loaded. The definitions this project resolves are typically standalone
-# files without that parent chain, so CuraEngine aborts with "Trying to
-# retrieve setting with no value given" the first time it needs one of
-# these. Values here mirror fdmprinter.def.json's own defaults and are
-# overridden by whatever the resolved definition specifies, then by the
-# profile/request settings.
+# CuraEngine builds its entire settings registry from whatever is passed via
+# -j; the distro cura-engine package ships only the engine binary, not
+# Cura's resource definitions, so without a -j file CuraEngine has no
+# schema at all and aborts with "Trying to retrieve setting with no value
+# given" for the first setting we didn't pass explicitly. This vendored
+# copy (see resources/README.md) is always loaded via -j so every setting
+# has a real default; printer-specific definitions only need to override
+# values that differ from this generic base.
+BUNDLED_FDMPRINTER_PATH = Path(__file__).resolve().parent / "resources" / "fdmprinter.def.json"
+
+# Generic bed/machine fallbacks layered on top of BUNDLED_FDMPRINTER_PATH's
+# own (intentionally tiny, 100x100x100mm) defaults so an unresolved printer
+# definition still slices for a typical desktop FDM printer. Overridden by
+# whatever the resolved definition specifies, then by the profile/request
+# settings.
 ESSENTIAL_MACHINE_DEFAULTS: Dict[str, str] = {
     "machine_width": "220",
     "machine_depth": "220",
@@ -705,35 +712,34 @@ class CuraSlicer:
                 logger.warning(
                     f"[job {job['id']}] Invalid rotation matrix in transform, ignoring")
 
-        cmd = [self.cura_engine, "slice", "-v", "-p"]
+        # Always load the bundled fdmprinter schema so every setting
+        # CuraEngine might query has a real default (see resources/README.md
+        # and BUNDLED_FDMPRINTER_PATH above).
+        cmd = [self.cura_engine, "slice", "-v", "-p", "-j", str(BUNDLED_FDMPRINTER_PATH)]
 
-        # Printer definition
+        # The named printer definition (if resolvable) only contributes
+        # overrides on top of that base – bed size, origin convention,
+        # nozzle, etc. – via -s, rather than its own -j.
         machine_settings = dict(ESSENTIAL_MACHINE_DEFAULTS)
         if def_name:
-            def_path = self._resolve_definition_path(def_name)
-            if def_path:
-                cmd += ["-j", str(def_path)]
+            if self._resolve_definition_path(def_name):
                 machine_settings.update(
                     self._read_definition_overrides(
                         def_name, ESSENTIAL_MACHINE_DEFAULTS.keys()))
             else:
                 logger.warning(
-                    f"Printer definition '{def_name}' not found; slicing without it")
+                    f"Printer definition '{def_name}' not found; using generic machine defaults")
 
-        # Settings. Definitions referenced here ship without CuraEngine's
-        # fdmprinter/fdmextruder parent chain, so basic machine settings
-        # (bed size, origin convention, ...) have no usable built-in default
-        # and CuraEngine aborts with "no value given" unless supplied
-        # explicitly. machine_settings provides conservative fallbacks,
-        # overridden by whatever the resolved definition itself specifies,
-        # then by the profile/request settings.
         for key, value in {**machine_settings, **settings}.items():
             cmd += ["-s", f"{key}={value}"]
 
-        # mesh_rotation_matrix has no default in fdmprinter.def.json, so CuraEngine
-        # aborts with "no value given" unless it's supplied explicitly. Rotation is
-        # already baked into the STL vertices above, so the mesh itself stays identity.
+        # Rotation and position are already baked into the STL vertices
+        # above, so tell CuraEngine the mesh itself needs no further
+        # transform.
         cmd += ["-s", "mesh_rotation_matrix=[[1,0,0],[0,1,0],[0,0,1]]"]
+        cmd += ["-s", "mesh_position_x=0"]
+        cmd += ["-s", "mesh_position_y=0"]
+        cmd += ["-s", "mesh_position_z=0"]
 
         cmd += ["-o", str(output_path), "-l", str(input_path)]
 
