@@ -38,6 +38,17 @@ MAX_JOB_HISTORY = 20
 PROGRESS_RE = re.compile(r"Progress:(\w+):([0-9.]+)")
 
 
+def _read_plugin_version() -> str:
+    version_file = Path(__file__).resolve().parent.parent / "VERSION"
+    try:
+        return version_file.read_text().strip()
+    except OSError:
+        return "unknown"
+
+
+PLUGIN_VERSION = _read_plugin_version()
+
+
 def _transform_stl_binary(
     src_path: str,
     dst_path: str,
@@ -217,6 +228,7 @@ class CuraSlicer:
         version = await self._get_engine_version()
         definitions = self._list_definitions()
         return {
+            "plugin_version": PLUGIN_VERSION,
             "cura_engine_path": self.cura_engine,
             "cura_engine_version": version,
             "cura_engine_found": version is not None,
@@ -664,6 +676,11 @@ class CuraSlicer:
         # Settings
         for key, value in settings.items():
             cmd += ["-s", f"{key}={value}"]
+
+        # mesh_rotation_matrix has no default in fdmprinter.def.json, so CuraEngine
+        # aborts with "no value given" unless it's supplied explicitly. Rotation is
+        # already baked into the STL vertices above, so the mesh itself stays identity.
+        cmd += ["-s", "mesh_rotation_matrix=[[1,0,0],[0,1,0],[0,0,1]]"]
 
         cmd += ["-o", str(output_path), "-l", str(input_path)]
 

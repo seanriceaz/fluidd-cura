@@ -277,11 +277,16 @@
   <header>
     <span class="logo">🔪</span>
     <h1>Cura Slicer</h1>
-    <span v-if="engineVersion" class="chip" style="margin-left:auto;">
-      CuraEngine {{ engineVersion }}
-    </span>
-    <span v-if="engineVersion === null" class="chip" style="margin-left:auto;color:var(--error);">
-      ⚠ CuraEngine not found
+    <span style="margin-left:auto; display:flex; gap:8px;">
+      <span v-if="pluginVersion" class="chip">
+        fluidd-cura v{{ pluginVersion }}
+      </span>
+      <span v-if="engineVersion" class="chip">
+        CuraEngine {{ engineVersion }}
+      </span>
+      <span v-if="engineVersion === null" class="chip" style="color:var(--error);">
+        ⚠ CuraEngine not found
+      </span>
     </span>
   </header>
 
@@ -720,10 +725,12 @@ createApp({
 
     // ── Status ──
     const engineVersion = ref(undefined); // undefined = loading, null = not found
+    const pluginVersion = ref('');
     async function loadStatus() {
       try {
         const s = await api('GET', '/server/cura_slicer/status');
         engineVersion.value = s.cura_engine_found ? s.cura_engine_version : null;
+        pluginVersion.value = s.plugin_version || '';
       } catch { engineVersion.value = null; }
     }
 
@@ -1259,6 +1266,7 @@ createApp({
     return {
       tab,
       engineVersion,
+      pluginVersion,
       profiles, definitions, deleteProfile,
       openProfileEditor, profileEditor, saveProfile, onCuraProfileFile,
       defUploadMsg, defUploadOk, onDefinitionFile,
