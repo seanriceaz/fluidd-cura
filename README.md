@@ -79,9 +79,10 @@ chmod +x install.sh
 1. **Checks CuraEngine** – installs via `apt-get install cura-engine` if missing or outdated
 2. **Installs the Moonraker plugin** into `~/moonraker/moonraker/components/`
 3. **Adds `[cura_slicer]`** to `moonraker.conf`
-4. **Deploys the web UI** to `/var/www/cura-slicer/` and downloads Vue 3 for offline use
-5. **Configures nginx** with a `/cura-slicer/` location block
-6. **Restarts Moonraker**
+4. **Adds `[update_manager fluidd_cura]`** to `moonraker.conf` so Fluidd can detect repo updates
+5. **Deploys the web UI** to `/var/www/cura-slicer/` and downloads Vue 3 for offline use
+6. **Configures nginx** with a `/cura-slicer/` location block
+7. **Restarts Moonraker**
 
 ---
 
@@ -204,6 +205,28 @@ To add a custom definition:
 
 ---
 
+## Updating
+
+`install.sh` registers this repo with Moonraker's `update_manager`
+(`[update_manager fluidd_cura]` in `moonraker.conf`), so Fluidd's
+**Settings → Update Manager** page will show "fluidd_cura" alongside
+Klipper/Moonraker/Fluidd and let you update it from there — it runs `git
+pull` against the cloned repo and restarts Moonraker (which reloads
+`cura_slicer.py`, since it's symlinked in).
+
+> **Note**: the web UI files in `/var/www/cura-slicer/` are *copied*, not
+> symlinked. If an update changes `ui/index.html`, rerun `./install.sh` (or
+> `sudo cp ui/index.html /var/www/cura-slicer/index.html`) afterwards to
+> pick up the new UI.
+
+If you installed before this feature was added, or installed manually,
+add the `[update_manager fluidd_cura]` section from
+[`config/moonraker_cura_slicer.conf`](config/moonraker_cura_slicer.conf)
+to your `moonraker.conf` yourself (set `path` to wherever you cloned the
+repo) and restart Moonraker.
+
+---
+
 ## Uninstall
 
 ```bash
@@ -242,6 +265,18 @@ Set the path explicitly in `moonraker.conf`:
 [cura_slicer]
 cura_engine_path: /usr/bin/CuraEngine
 ```
+
+**Fluidd doesn't detect/show updates for fluidd-cura**
+- Confirm `[update_manager fluidd_cura]` exists in `moonraker.conf` (only
+  added automatically since the update-tracking feature was introduced —
+  rerun `./install.sh` or add it manually, see [Updating](#updating))
+- `path` must point at the actual git clone, and `origin`/`primary_branch`
+  must match `git remote -v` / `git branch` output for that clone
+- The clone must have no uncommitted local changes — Moonraker's
+  `update_manager` won't report/apply updates on a dirty working tree
+  (`git -C ~/fluidd-cura status` to check)
+- Restart Moonraker after editing `moonraker.conf` so it picks up the
+  new section: `sudo systemctl restart moonraker`
 
 ---
 

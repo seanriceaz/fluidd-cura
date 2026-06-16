@@ -6,7 +6,8 @@
 #  What this script does:
 #    1. Checks for / installs CuraEngine (via apt or from source)
 #    2. Locates the Moonraker installation and installs the plugin
-#    3. Adds [cura_slicer] to moonraker.conf (if not already present)
+#    3. Adds [cura_slicer] and [update_manager fluidd_cura] to moonraker.conf
+#       (if not already present) so Fluidd can detect repo updates
 #    4. Deploys the web UI and downloads Vue 3
 #    5. Configures nginx to serve the UI at /cura-slicer/
 #    6. Restarts moonraker
@@ -228,6 +229,29 @@ else
 cura_engine_path: ${CURA_BIN:-CuraEngine}
 EOF
   ok "Section added to $MOONRAKER_CONF"
+fi
+
+if grep -q '^\[update_manager fluidd_cura\]' "$MOONRAKER_CONF"; then
+  ok "[update_manager fluidd_cura] already present in moonraker.conf – skipping."
+else
+  info "Registering fluidd-cura with Moonraker's update_manager…"
+  REPO_ORIGIN="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
+  [ -z "$REPO_ORIGIN" ] && REPO_ORIGIN="https://github.com/seanriceaz/fluidd-cura.git"
+  REPO_BRANCH="$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [ -z "$REPO_BRANCH" ] || [ "$REPO_BRANCH" = "HEAD" ] && REPO_BRANCH="main"
+  cat >> "$MOONRAKER_CONF" <<EOF
+
+# ── Cura Slicer update tracking (added by fluidd-cura install.sh) ──
+[update_manager fluidd_cura]
+type: git_repo
+path: ${SCRIPT_DIR}
+origin: ${REPO_ORIGIN}
+primary_branch: ${REPO_BRANCH}
+managed_services: moonraker
+is_system_service: False
+EOF
+  ok "Section added to $MOONRAKER_CONF"
+  info "Fluidd → Settings → Update Manager will now track fluidd-cura."
 fi
 
 # =============================================================================

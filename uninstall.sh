@@ -21,7 +21,7 @@ echo -e "${BOLD}${RED}Fluidd-Cura Slicer — Uninstaller${RESET}"
 echo ""
 warn "This will remove:"
 warn "  • Moonraker plugin (cura_slicer.py)"
-warn "  • [cura_slicer] section from moonraker.conf"
+warn "  • [cura_slicer] and [update_manager fluidd_cura] sections from moonraker.conf"
 warn "  • Cura Slicer panel from Fluidd's dashboard"
 warn "  • nginx /cura-slicer/ location config"
 warn "  • Web UI files (/var/www/cura-slicer/)"
@@ -93,6 +93,20 @@ cleaned = re.sub(
 # Also remove a bare [cura_slicer] section if the comment wasn't there
 cleaned = re.sub(
     r'\n\[cura_slicer\][^\[]*',
+    '',
+    cleaned,
+    flags=re.DOTALL,
+)
+# Remove the update_manager comment block + section
+cleaned = re.sub(
+    r'\n# ── Cura Slicer update tracking \(added by fluidd-cura.*?\[update_manager fluidd_cura\][^\[]*',
+    '',
+    cleaned,
+    flags=re.DOTALL,
+)
+# Also remove a bare [update_manager fluidd_cura] section if the comment wasn't there
+cleaned = re.sub(
+    r'\n\[update_manager fluidd_cura\][^\[]*',
     '',
     cleaned,
     flags=re.DOTALL,
