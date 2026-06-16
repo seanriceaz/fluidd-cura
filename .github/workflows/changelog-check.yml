@@ -1,0 +1,30 @@
+name: Changelog Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a changelog fragment
+        run: |
+          set -euo pipefail
+          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=1
+          added=$(git diff --name-only --diff-filter=A \
+            "origin/${{ github.event.pull_request.base.ref }}"...HEAD -- changelog.d || true)
+          added=$(echo "$added" | grep -v -E '/(README|TEMPLATE)\.md$' || true)
+          if [ -z "$added" ]; then
+            echo "::error::No changelog fragment found under changelog.d/. Add one (copy changelog.d/TEMPLATE.md) describing this change, or apply the 'skip-changelog' label for PRs with no user-facing change."
+            exit 1
+          fi
+          echo "Found changelog fragment(s):"
+          echo "$added"
+          python3 .github/scripts/check_fragments.py $added

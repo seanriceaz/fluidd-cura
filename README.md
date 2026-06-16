@@ -79,9 +79,10 @@ chmod +x install.sh
 1. **Checks CuraEngine** – installs via `apt-get install cura-engine` if missing or outdated
 2. **Installs the Moonraker plugin** into `~/moonraker/moonraker/components/`
 3. **Adds `[cura_slicer]`** to `moonraker.conf`
-4. **Deploys the web UI** to `/var/www/cura-slicer/` and downloads Vue 3 for offline use
-5. **Configures nginx** with a `/cura-slicer/` location block
-6. **Restarts Moonraker**
+4. **Adds `[update_manager fluidd_cura]`** to `moonraker.conf` so Fluidd can detect repo updates
+5. **Deploys the web UI** to `/var/www/cura-slicer/` and downloads Vue 3 for offline use
+6. **Configures nginx** with a `/cura-slicer/` location block
+7. **Restarts Moonraker**
 
 ---
 
@@ -204,6 +205,34 @@ To add a custom definition:
 
 ---
 
+## Updating
+
+`install.sh` registers this repo with Moonraker's `update_manager`
+(`[update_manager fluidd_cura]` in `moonraker.conf`), so Fluidd's
+**Settings → Update Manager** page will show "fluidd_cura" alongside
+Klipper/Moonraker/Fluidd and let you update it from there. Clicking
+**Update** runs `git pull` against the cloned repo, then:
+
+- runs `scripts/deploy_ui.sh` (the config's `install_script`) to redeploy
+  `ui/index.html` to `/var/www/cura-slicer/`
+- restarts Moonraker (`managed_services: moonraker`), which reloads
+  `cura_slicer.py` since it's symlinked in
+
+Both halves of the UI/plugin update happen automatically — no manual
+redeploy step needed. `deploy_ui.sh` runs without `sudo`, since
+`install.sh` makes the install user (not `www-data`) the owner of
+`/var/www/cura-slicer/`; nginx only needs read access to serve the files,
+not ownership.
+
+If you installed before this feature was added, or installed manually,
+add the `[update_manager fluidd_cura]` section from
+[`config/moonraker_cura_slicer.conf`](config/moonraker_cura_slicer.conf)
+to your `moonraker.conf` yourself (set `path` to wherever you cloned the
+repo), make sure you own `/var/www/cura-slicer/` (`sudo chown -R
+$USER:$USER /var/www/cura-slicer`), and restart Moonraker.
+
+---
+
 ## Uninstall
 
 ```bash
@@ -242,6 +271,36 @@ Set the path explicitly in `moonraker.conf`:
 [cura_slicer]
 cura_engine_path: /usr/bin/CuraEngine
 ```
+
+**Fluidd doesn't detect/show updates for fluidd-cura**
+- Confirm `[update_manager fluidd_cura]` exists in `moonraker.conf` (only
+  added automatically since the update-tracking feature was introduced —
+  rerun `./install.sh` or add it manually, see [Updating](#updating))
+- `path` must point at the actual git clone, and `origin`/`primary_branch`
+  must match `git remote -v` / `git branch` output for that clone
+- The clone must have no uncommitted local changes — Moonraker's
+  `update_manager` won't report/apply updates on a dirty working tree
+  (`git -C ~/fluidd-cura status` to check)
+- Restart Moonraker after editing `moonraker.conf` so it picks up the
+  new section: `sudo systemctl restart moonraker`
+
+**UI doesn't update after an applied update**
+`scripts/deploy_ui.sh` needs to write to `/var/www/cura-slicer/` without
+`sudo`. If that directory is still owned by `www-data` (e.g. from an
+install predating this feature), fix it once with:
+```bash
+sudo chown -R $USER:$USER /var/www/cura-slicer
+```
+
+---
+
+## Versioning & Changelog
+
+This project follows [semver](https://semver.org/); the current version is
+in [`VERSION`](VERSION). See [`CHANGELOG.md`](CHANGELOG.md) for release
+notes. PRs add a fragment under [`changelog.d/`](changelog.d/README.md)
+describing their change; merging to `main` automatically bumps the version,
+updates the changelog, and publishes a GitHub Release.
 
 ---
 
