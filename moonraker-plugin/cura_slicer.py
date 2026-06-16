@@ -665,6 +665,11 @@ class CuraSlicer:
         for key, value in settings.items():
             cmd += ["-s", f"{key}={value}"]
 
+        # mesh_rotation_matrix has no default in fdmprinter.def.json, so CuraEngine
+        # aborts with "no value given" unless it's supplied explicitly. Rotation is
+        # already baked into the STL vertices above, so the mesh itself stays identity.
+        cmd += ["-s", "mesh_rotation_matrix=[[1,0,0],[0,1,0],[0,0,1]]"]
+
         cmd += ["-o", str(output_path), "-l", str(input_path)]
 
         logger.info(f"[job {job['id']}] Running: {' '.join(cmd)}")
