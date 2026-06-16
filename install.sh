@@ -6,7 +6,8 @@
 #  What this script does:
 #    1. Checks for / installs CuraEngine (via apt or from source)
 #    2. Locates the Moonraker installation and installs the plugin
-#    3. Adds [cura_slicer] to moonraker.conf (if not already present)
+#    3. Adds [cura_slicer] and [update_manager fluidd_cura] to moonraker.conf
+#       (if not already present) so Fluidd can detect repo updates
 #    4. Deploys the web UI and downloads Vue 3
 #    5. Configures nginx to serve the UI at /cura-slicer/
 #    6. Restarts moonraker
@@ -230,6 +231,30 @@ EOF
   ok "Section added to $MOONRAKER_CONF"
 fi
 
+if grep -q '^\[update_manager fluidd_cura\]' "$MOONRAKER_CONF"; then
+  ok "[update_manager fluidd_cura] already present in moonraker.conf – skipping."
+else
+  info "Registering fluidd-cura with Moonraker's update_manager…"
+  REPO_ORIGIN="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
+  [ -z "$REPO_ORIGIN" ] && REPO_ORIGIN="https://github.com/seanriceaz/fluidd-cura.git"
+  REPO_BRANCH="$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [ -z "$REPO_BRANCH" ] || [ "$REPO_BRANCH" = "HEAD" ] && REPO_BRANCH="main"
+  cat >> "$MOONRAKER_CONF" <<EOF
+
+# ── Cura Slicer update tracking (added by fluidd-cura install.sh) ──
+[update_manager fluidd_cura]
+type: git_repo
+path: ${SCRIPT_DIR}
+origin: ${REPO_ORIGIN}
+primary_branch: ${REPO_BRANCH}
+managed_services: moonraker
+install_script: scripts/deploy_ui.sh
+is_system_service: False
+EOF
+  ok "Section added to $MOONRAKER_CONF"
+  info "Fluidd → Settings → Update Manager will now track fluidd-cura."
+fi
+
 # =============================================================================
 # 5. Deploy web UI
 # =============================================================================
@@ -237,7 +262,14 @@ heading "Deploying web UI"
 
 UI_DEST="/var/www/cura-slicer"
 sudo mkdir -p "$UI_DEST"
-sudo cp "$SCRIPT_DIR/ui/index.html" "$UI_DEST/index.html"
+# Own the directory as the install user rather than www-data: nginx only
+# needs read/traverse access (not ownership) to serve static files, and
+# this lets deploy_ui.sh redeploy index.html without sudo after Moonraker
+# pulls an update via update_manager.
+sudo chown "$INSTALL_USER":"$INSTALL_USER" "$UI_DEST"
+chmod 755 "$UI_DEST"
+
+bash "$SCRIPT_DIR/scripts/deploy_ui.sh"
 
 # Download Vue 3 for offline use
 VUE_URL="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"
@@ -247,12 +279,12 @@ if [ -f "$VUE_DEST" ]; then
   ok "Vue 3 already downloaded."
 else
   info "Downloading Vue 3 from CDN…"
-  if sudo wget -q -O "$VUE_DEST" "$VUE_URL"; then
+  if wget -q -O "$VUE_DEST" "$VUE_URL"; then
     ok "Vue 3 downloaded."
   else
     warn "Download failed – UI will fall back to CDN on first load (requires internet)."
     # Create a fallback stub that loads from CDN
-    sudo tee "$VUE_DEST" > /dev/null <<'STUB'
+    tee "$VUE_DEST" > /dev/null <<'STUB'
 // Fallback: load Vue from CDN
 document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"><\/script>');
 STUB
@@ -271,7 +303,7 @@ for item in \
     ok "$fname already downloaded."
   else
     info "Downloading $fname …"
-    if sudo wget -q -O "$dest" "$url"; then
+    if wget -q -O "$dest" "$url"; then
       ok "$fname downloaded."
     else
       warn "Download failed for $fname – 3D preview will not work without this file."
@@ -279,7 +311,6 @@ for item in \
   fi
 done
 
-sudo chown -R www-data:www-data "$UI_DEST" 2>/dev/null || true
 ok "UI deployed to $UI_DEST"
 
 # =============================================================================
