@@ -248,6 +248,7 @@ path: ${SCRIPT_DIR}
 origin: ${REPO_ORIGIN}
 primary_branch: ${REPO_BRANCH}
 managed_services: moonraker
+install_script: scripts/deploy_ui.sh
 is_system_service: False
 EOF
   ok "Section added to $MOONRAKER_CONF"
@@ -261,7 +262,14 @@ heading "Deploying web UI"
 
 UI_DEST="/var/www/cura-slicer"
 sudo mkdir -p "$UI_DEST"
-sudo cp "$SCRIPT_DIR/ui/index.html" "$UI_DEST/index.html"
+# Own the directory as the install user rather than www-data: nginx only
+# needs read/traverse access (not ownership) to serve static files, and
+# this lets deploy_ui.sh redeploy index.html without sudo after Moonraker
+# pulls an update via update_manager.
+sudo chown "$INSTALL_USER":"$INSTALL_USER" "$UI_DEST"
+chmod 755 "$UI_DEST"
+
+bash "$SCRIPT_DIR/scripts/deploy_ui.sh"
 
 # Download Vue 3 for offline use
 VUE_URL="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"
@@ -271,12 +279,12 @@ if [ -f "$VUE_DEST" ]; then
   ok "Vue 3 already downloaded."
 else
   info "Downloading Vue 3 from CDN…"
-  if sudo wget -q -O "$VUE_DEST" "$VUE_URL"; then
+  if wget -q -O "$VUE_DEST" "$VUE_URL"; then
     ok "Vue 3 downloaded."
   else
     warn "Download failed – UI will fall back to CDN on first load (requires internet)."
     # Create a fallback stub that loads from CDN
-    sudo tee "$VUE_DEST" > /dev/null <<'STUB'
+    tee "$VUE_DEST" > /dev/null <<'STUB'
 // Fallback: load Vue from CDN
 document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"><\/script>');
 STUB
@@ -295,7 +303,7 @@ for item in \
     ok "$fname already downloaded."
   else
     info "Downloading $fname …"
-    if sudo wget -q -O "$dest" "$url"; then
+    if wget -q -O "$dest" "$url"; then
       ok "$fname downloaded."
     else
       warn "Download failed for $fname – 3D preview will not work without this file."
@@ -303,7 +311,6 @@ for item in \
   fi
 done
 
-sudo chown -R www-data:www-data "$UI_DEST" 2>/dev/null || true
 ok "UI deployed to $UI_DEST"
 
 # =============================================================================

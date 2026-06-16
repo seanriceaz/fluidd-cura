@@ -210,20 +210,26 @@ To add a custom definition:
 `install.sh` registers this repo with Moonraker's `update_manager`
 (`[update_manager fluidd_cura]` in `moonraker.conf`), so Fluidd's
 **Settings → Update Manager** page will show "fluidd_cura" alongside
-Klipper/Moonraker/Fluidd and let you update it from there — it runs `git
-pull` against the cloned repo and restarts Moonraker (which reloads
-`cura_slicer.py`, since it's symlinked in).
+Klipper/Moonraker/Fluidd and let you update it from there. Clicking
+**Update** runs `git pull` against the cloned repo, then:
 
-> **Note**: the web UI files in `/var/www/cura-slicer/` are *copied*, not
-> symlinked. If an update changes `ui/index.html`, rerun `./install.sh` (or
-> `sudo cp ui/index.html /var/www/cura-slicer/index.html`) afterwards to
-> pick up the new UI.
+- runs `scripts/deploy_ui.sh` (the config's `install_script`) to redeploy
+  `ui/index.html` to `/var/www/cura-slicer/`
+- restarts Moonraker (`managed_services: moonraker`), which reloads
+  `cura_slicer.py` since it's symlinked in
+
+Both halves of the UI/plugin update happen automatically — no manual
+redeploy step needed. `deploy_ui.sh` runs without `sudo`, since
+`install.sh` makes the install user (not `www-data`) the owner of
+`/var/www/cura-slicer/`; nginx only needs read access to serve the files,
+not ownership.
 
 If you installed before this feature was added, or installed manually,
 add the `[update_manager fluidd_cura]` section from
 [`config/moonraker_cura_slicer.conf`](config/moonraker_cura_slicer.conf)
 to your `moonraker.conf` yourself (set `path` to wherever you cloned the
-repo) and restart Moonraker.
+repo), make sure you own `/var/www/cura-slicer/` (`sudo chown -R
+$USER:$USER /var/www/cura-slicer`), and restart Moonraker.
 
 ---
 
@@ -277,6 +283,14 @@ cura_engine_path: /usr/bin/CuraEngine
   (`git -C ~/fluidd-cura status` to check)
 - Restart Moonraker after editing `moonraker.conf` so it picks up the
   new section: `sudo systemctl restart moonraker`
+
+**UI doesn't update after an applied update**
+`scripts/deploy_ui.sh` needs to write to `/var/www/cura-slicer/` without
+`sudo`. If that directory is still owned by `www-data` (e.g. from an
+install predating this feature), fix it once with:
+```bash
+sudo chown -R $USER:$USER /var/www/cura-slicer
+```
 
 ---
 
