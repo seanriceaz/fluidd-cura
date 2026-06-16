@@ -245,6 +245,16 @@ cura_engine_path: /usr/bin/CuraEngine
 
 ---
 
+## Versioning & Changelog
+
+This project follows [semver](https://semver.org/); the current version is
+in [`VERSION`](VERSION). See [`CHANGELOG.md`](CHANGELOG.md) for release
+notes. PRs add a fragment under [`changelog.d/`](changelog.d/README.md)
+describing their change; merging to `main` automatically bumps the version,
+updates the changelog, and publishes a GitHub Release.
+
+---
+
 ## License
 
 GPL-3.0 — same as Klipper and Moonraker.
