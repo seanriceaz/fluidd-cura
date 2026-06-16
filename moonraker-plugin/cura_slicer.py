@@ -49,6 +49,13 @@ IDENTITY_ROTATION = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 # values that differ from this generic base.
 BUNDLED_FDMPRINTER_PATH = Path(__file__).resolve().parent / "resources" / "fdmprinter.def.json"
 
+# Per-extruder settings (material_diameter, extruder_nr, nozzle offsets, ...)
+# live in a separate schema that fdmprinter.def.json doesn't define at all.
+# CuraEngine only loads it – and only stamps extruder_nr onto the extruder –
+# when a -j is given right after switching context with -e<N>, so this must
+# always be loaded for extruder 0 even in a single-extruder setup.
+BUNDLED_FDMEXTRUDER_PATH = Path(__file__).resolve().parent / "resources" / "fdmextruder.def.json"
+
 # Generic bed/machine fallbacks layered on top of BUNDLED_FDMPRINTER_PATH's
 # own (intentionally tiny, 100x100x100mm) defaults so an unresolved printer
 # definition still slices for a typical desktop FDM printer. Overridden by
@@ -740,6 +747,11 @@ class CuraSlicer:
         cmd += ["-s", "mesh_position_x=0"]
         cmd += ["-s", "mesh_position_y=0"]
         cmd += ["-s", "mesh_position_z=0"]
+
+        # Always create extruder 0 with the bundled fdmextruder schema, even
+        # for this single-extruder setup – CuraEngine has no per-extruder
+        # defaults (material_diameter, extruder_nr, ...) otherwise.
+        cmd += ["-e0", "-j", str(BUNDLED_FDMEXTRUDER_PATH)]
 
         cmd += ["-o", str(output_path), "-l", str(input_path)]
 
