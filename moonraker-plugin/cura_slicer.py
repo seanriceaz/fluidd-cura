@@ -436,6 +436,8 @@ class CuraSlicer:
             data["name"] = name
 
         path = self._profile_path(name)
+        name = path.stem
+        data["name"] = name
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
         logger.info(f"Saved profile: {name}")

@@ -810,9 +810,13 @@ createApp({
       if (!file) return;
       profileEditor.curaprofileName = file.name;
       profileEditor.curaprofileB64 = await fileToBase64(file);
-      // Pre-fill name from filename
+      // Pre-fill name/display name from filename
+      const baseName = file.name.replace(/\.curaprofile$/i, '');
       if (!profileEditor.display_name) {
-        profileEditor.display_name = file.name.replace(/\.curaprofile$/i, '');
+        profileEditor.display_name = baseName;
+      }
+      if (profileEditor.isNew && !profileEditor.name.trim()) {
+        profileEditor.name = baseName.replace(/[^\w\-. ]/g, '_');
       }
     }
 
