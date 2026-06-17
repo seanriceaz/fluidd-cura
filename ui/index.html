@@ -707,7 +707,11 @@ async function api(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(MOONRAKER + path, opts);
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error?.message || JSON.stringify(json));
+  if (!res.ok) {
+    const err = new Error(json.error?.message || JSON.stringify(json));
+    err.status = res.status;
+    throw err;
+  }
   return json.result;
 }
 
@@ -810,9 +814,13 @@ createApp({
       if (!file) return;
       profileEditor.curaprofileName = file.name;
       profileEditor.curaprofileB64 = await fileToBase64(file);
-      // Pre-fill name from filename
+      // Pre-fill name/display name from filename
+      const baseName = file.name.replace(/\.curaprofile$/i, '');
       if (!profileEditor.display_name) {
-        profileEditor.display_name = file.name.replace(/\.curaprofile$/i, '');
+        profileEditor.display_name = baseName;
+      }
+      if (profileEditor.isNew && !profileEditor.name.trim()) {
+        profileEditor.name = baseName.replace(/[^\w\-. ]/g, '_');
       }
     }
 
@@ -839,7 +847,18 @@ createApp({
         const path = profileEditor.isNew
           ? '/server/cura_slicer/profiles'
           : `/server/cura_slicer/profiles/${encodeURIComponent(name)}`;
-        await api(method, path, body);
+        try {
+          await api(method, path, body);
+        } catch (e) {
+          if (profileEditor.isNew && e.status === 409) {
+            if (!confirm(`A profile named "${name}" already exists. Overwrite it?`)) {
+              return;
+            }
+            await api(method, path, { ...body, overwrite: true });
+          } else {
+            throw e;
+          }
+        }
         await loadProfiles();
         profileEditor.open = false;
       } catch(e) {
