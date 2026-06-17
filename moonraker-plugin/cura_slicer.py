@@ -384,9 +384,11 @@ class CuraSlicer:
                     })
             return {"profiles": profiles}
 
-        # POST – create or replace a profile
+        # POST – create a new profile (must not collide with an existing one
+        # unless the caller explicitly confirms an overwrite)
         body = web_request.get_args()
-        return await self._save_profile(body)
+        allow_overwrite = bool(body.pop("overwrite", False))
+        return await self._save_profile(body, allow_overwrite=allow_overwrite)
 
     async def _handle_profile(self, web_request: WebRequest) -> Any:
         profile_name = web_request.get_str("profile_name")
@@ -413,15 +415,21 @@ class CuraSlicer:
             logger.info(f"Deleted profile: {profile_name}")
             return {"deleted": profile_name}
 
-        # POST – update
+        # POST – update an existing profile (overwrite is always allowed
+        # here since the caller is editing this specific profile)
         body = web_request.get_args()
         body["name"] = profile_name
-        return await self._save_profile(body)
+        return await self._save_profile(body, allow_overwrite=True)
 
-    async def _save_profile(self, data: Dict) -> Dict:
+    async def _save_profile(self, data: Dict, allow_overwrite: bool = True) -> Dict:
         name = data.get("name", "").strip()
         if not name:
             raise self.server.error("Profile 'name' is required", 400)
+
+        if not allow_overwrite and self._profile_path(name).exists():
+            raise self.server.error(
+                f"Profile '{self._profile_path(name).stem}' already exists", 409
+            )
 
         # If a .curaprofile upload was provided (base64 zip), parse it
         curaprofile_b64 = data.pop("curaprofile_b64", None)
